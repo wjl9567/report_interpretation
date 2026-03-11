@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["*"]
 
+    # 嵌入/患者接口展示模式（按医院可配置）
+    # list_select：弹出界面先展示报告列表，选中某条再解读该条
+    # latest_auto：弹出后自动解读该患者最新一条报告
+    EMBED_REPORT_MODE: str = "list_select"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

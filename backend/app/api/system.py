@@ -45,6 +45,7 @@ async def get_frontend_config():
         "version": settings.APP_VERSION,
         "lis_adapter": settings.LIS_ADAPTER,
         "hl7_enabled": settings.HL7_ENABLED,
+        "embed_report_mode": settings.EMBED_REPORT_MODE,
         "departments": [
             {"code": "hematology", "name": "血液科"},
             {"code": "internal", "name": "内科"},

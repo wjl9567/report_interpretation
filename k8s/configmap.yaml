@@ -18,3 +18,5 @@ data:
   LIS_USE_ASMX: "false"
   LIS_API_BASE_URL: ""
   HL7_ENABLED: "false"
+  # 嵌入/患者接口：list_select=先展示报告列表选中再解读，latest_auto=自动解读最新一条
+  EMBED_REPORT_MODE: "list_select"

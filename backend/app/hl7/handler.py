@@ -104,6 +104,9 @@ class HL7MessageHandler:
 
     async def _persist(self, report_data: ReportData):
         """将报告数据写入数据库"""
+        if not (report_data.report_no or "").strip():
+            logger.warning("HL7 报告 report_no 为空，跳过持久化")
+            return
         async with async_session() as session:
             session: AsyncSession
 

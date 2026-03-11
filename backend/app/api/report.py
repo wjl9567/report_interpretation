@@ -97,7 +97,11 @@ async def get_report_pdf(patient_id: str, report_no: str):
         raise HTTPException(status_code=501, detail="当前 LIS 适配器不支持 PDF 代理")
     try:
         content = await get_pdf(patient_id, report_no)
-        return Response(content=content, media_type="application/pdf")
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline; filename=report.pdf"},
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

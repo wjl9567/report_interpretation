@@ -26,6 +26,12 @@ const routes = [
     name: 'EmbedInner',
     component: () => import('@/views/EmbedInnerView.vue'),
   },
+  {
+    path: '/patient/:patientId',
+    name: 'Patient',
+    component: () => import('@/views/EmbedInnerView.vue'),
+    meta: { embedReportMode: 'list_select' },
+  },
 ]
 
 const router = createRouter({

@@ -81,6 +81,8 @@ class WinningLISAdapter(BaseLISAdapter):
     )
     async def _request(self, endpoint_name: str, **params) -> httpx.Response:
         """统一请求入口，自带重试"""
+        if not self.base_url:
+            raise ValueError("LIS_API_BASE_URL 未配置")
         method, path = self.mapper.get_request_config(endpoint_name)
         mapped_params = self.mapper.map_params(endpoint_name, **params)
 
@@ -96,6 +98,8 @@ class WinningLISAdapter(BaseLISAdapter):
 
     async def _call_asmx(self, hid: str) -> list[dict]:
         """调用 ASMX：入参 HID，返回 data 数组（含 FILEURL、DOCUMENTNAME、REPORTNO 等）"""
+        if not self.base_url:
+            raise ValueError("LIS_API_BASE_URL 未配置，无法调用 ASMX")
         ns = settings.LIS_ASMX_NAMESPACE
         method = settings.LIS_ASMX_METHOD_NAME
         param_name = settings.LIS_ASMX_JSON_PARAM_NAME
