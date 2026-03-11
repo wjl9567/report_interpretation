@@ -1,0 +1,44 @@
+# 环境与密钥（勿提交）
+.env
+.env.*
+!.env.example
+**/secret.yaml
+k8s/secret.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+*.egg-info/
+.eggs/
+
+# 数据库与上传
+*.db
+*.sqlite
+backend/data/
+backend/uploads/
+uploads/
+
+# Node / 前端
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.local
+
+# IDE 与系统
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+
+# 日志与临时
+*.log
+.cache/
+tmp/
+temp/

@@ -1,0 +1,103 @@
+# 可选：在集群内部署 PostgreSQL，供报告AI解读系统使用
+# 若使用已有外部 PostgreSQL，可跳过此文件，仅在 Secret 中配置 DATABASE_URL 指向外部地址
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: report-ai-postgres-init
+  namespace: report-ai
+data:
+  # 首次启动时创建数据库（若不存在）；应用连接 report_ai 库即可
+  init.sql: |
+    SELECT 'init' AS x;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-ai-postgres
+  namespace: report-ai
+  labels:
+    app: report-ai
+    component: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: report-ai
+      component: postgres
+  template:
+    metadata:
+      labels:
+        app: report-ai
+        component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: report-ai-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: report-ai-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: "report_ai"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "report_ai"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "report_ai"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: report-ai-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: report-ai-postgres
+  namespace: report-ai
+  labels:
+    app: report-ai
+    component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: report-ai
+    component: postgres
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: report-ai-postgres-data
+  namespace: report-ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi

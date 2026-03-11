@@ -1,0 +1,35 @@
+# 需集群已安装 Ingress Controller（如 nginx-ingress）
+# 按需修改 host 与 tls
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: report-ai-ingress
+  namespace: report-ai
+  annotations:
+    # nginx-ingress 常用注解示例
+    # nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: report-ai.your-hospital.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: report-ai-backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: report-ai-frontend
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - report-ai.your-hospital.local
+  #     secretName: report-ai-tls

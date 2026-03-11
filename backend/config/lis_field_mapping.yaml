@@ -1,0 +1,82 @@
+# LIS Web API 字段映射配置
+# 拿到卫宁接口文档后，只需修改右侧字段名（外部系统的字段名），无需改代码。
+# 左侧为本系统内部字段名，右侧为卫宁接口中对应的字段名。
+
+adapter: winning
+base_url: "${LIS_API_BASE_URL}"
+
+auth:
+  type: bearer            # bearer / basic / custom_header / none
+  token_field: "Authorization"
+  # basic_user / basic_pass 仅在 type=basic 时生效
+  basic_user: ""
+  basic_pass: ""
+  # custom_header 模式下自定义 header
+  custom_header_name: ""
+  custom_header_value: ""
+
+# 日期格式（外部系统返回的日期格式，用于解析）
+date_format: "%Y-%m-%d %H:%M:%S"
+
+endpoints:
+  # ---- 患者搜索 ----
+  patient_search:
+    path: /api/lis/patient/search
+    method: GET
+    params:
+      keyword: keyword
+    response_mapping:
+      data_root: "data"
+      fields:
+        patient_id: "patient_id"
+        name: "patient_name"
+        gender: "sex"
+        age: "age"
+        department: "dept_name"
+
+  # ---- 报告列表 ----
+  report_list:
+    path: /api/lis/reports
+    method: GET
+    params:
+      patient_id: patient_id
+    response_mapping:
+      data_root: "data"
+      fields:
+        report_no: "report_id"
+        report_title: "report_name"
+        report_date: "report_time"
+        report_type: "report_category"
+        has_abnormal: "abnormal_flag"
+
+  # ---- 报告详情（结构化 JSON） ----
+  report_detail:
+    path: /api/lis/report/detail
+    method: GET
+    params:
+      patient_id: patient_id
+      report_no: report_id
+    response_type: json       # json / pdf
+    response_mapping:
+      data_root: "data"
+      patient_fields:
+        patient_id: "patient_id"
+        name: "patient_name"
+        gender: "sex"
+        age: "age"
+        department: "dept_name"
+      items_root: "data.items"
+      item_fields:
+        name: "item_name"
+        value: "result"
+        unit: "unit"
+        reference_range: "ref_range"
+        abnormal_flag: "abnormal_flag"
+
+  # ---- 报告 PDF 下载 ----
+  report_pdf:
+    path: /api/lis/report/pdf
+    method: GET
+    params:
+      report_no: report_id
+    response_type: pdf

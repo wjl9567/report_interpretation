@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-ai-backend
+  namespace: report-ai
+  labels:
+    app: report-ai
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: report-ai
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: report-ai
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: report-ai-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: report-ai-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: report-ai-secret
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: uploads
+              mountPath: /app/uploads
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/system/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/v1/system/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: report-ai-backend-data
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: report-ai-backend-uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: report-ai-backend-data
+  namespace: report-ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: report-ai-backend-uploads
+  namespace: report-ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi

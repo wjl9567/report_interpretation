@@ -1,0 +1,20 @@
+# 后端非敏感配置，按需修改后 kubectl apply
+# DATABASE_URL 由 Secret report-ai-secret 提供，不在此处配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: report-ai-config
+  namespace: report-ai
+data:
+  HOST: "0.0.0.0"
+  PORT: "8080"
+  HOSPITAL_NAME: "报告AI解读"
+  APP_NAME: "报告AI解读系统"
+  # vLLM（安诊儿）与 OCR 改为院内实际地址或集群内 Service
+  VLLM_BASE_URL: "http://vllm-service.default.svc.cluster.local:8000"
+  OCR_SERVICE_URL: "http://ocr-service.default.svc.cluster.local:8866"
+  # LIS：mock=演示数据，winning=卫宁 ASMX；对接卫宁时改为 winning 并填 LIS_API_BASE_URL
+  LIS_ADAPTER: "mock"
+  LIS_USE_ASMX: "false"
+  LIS_API_BASE_URL: ""
+  HL7_ENABLED: "false"

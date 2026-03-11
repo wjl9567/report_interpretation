@@ -1,0 +1,44 @@
+# HL7 消息接收配置
+# 字段映射采用 HL7 段.字段.组件 表示法（如 PID.3.1 = PID段第3个字段第1个组件）
+
+hl7:
+  port: 2575
+  encoding: utf-8
+
+  # 支持接收的消息类型
+  message_types:
+    - "ORU^R01"       # 检验结果
+    - "ORU^R30"       # 影像报告（如有）
+
+  # 患者信息映射（PID 段）
+  field_mapping:
+    patient:
+      patient_id: "PID.3.1"       # 患者ID（住院号/门诊号）
+      name: "PID.5.1"             # 姓名
+      gender: "PID.8"             # 性别
+      date_of_birth: "PID.7"      # 出生日期（用于计算年龄）
+      department: "PV1.3.1"       # 就诊科室
+
+    # 报告信息映射（OBR 段）
+    report:
+      report_no: "OBR.3.1"        # 报告编号
+      report_title: "OBR.4.2"     # 报告名称
+      report_date: "OBR.7"        # 报告日期
+
+    # 检验项目映射（OBX 段，每个 OBX 段对应一个检验项目）
+    item:
+      name: "OBX.3.2"             # 项目名称
+      value: "OBX.5"              # 结果值
+      unit: "OBX.6.1"             # 单位
+      reference_range: "OBX.7"    # 参考范围
+      abnormal_flag: "OBX.8"      # 异常标记
+
+  # 性别映射（HL7 标准值 -> 系统内部值）
+  gender_map:
+    "M": "男"
+    "F": "女"
+    "O": "其他"
+    "U": "未知"
+
+  # 日期格式（HL7 中常用 yyyyMMddHHmmss）
+  date_format: "%Y%m%d%H%M%S"
