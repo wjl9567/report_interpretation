@@ -6,7 +6,7 @@ from typing import Optional
 
 class Settings(BaseSettings):
     APP_NAME: str = "报告AI解读系统"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.0.1"
     DEBUG: bool = False
 
     # 医院信息（每家医院独立配置）
