@@ -27,14 +27,14 @@ export function getReportDetail(patientId, reportNo) {
   return api.get('/report/detail', { params: { patient_id: patientId, report_no: reportNo } })
 }
 
-/** 同类检验项目趋势（多份报告中同一项目结果变化） */
-export function getReportTrend(patientId, itemName, source = 'lab', limit = 20) {
-  return api.get('/report/trend', { params: { patient_id: patientId, item_name: itemName, source, limit } })
-}
-
 /** AI解读报告 */
 export function interpretReport(data) {
   return api.post('/report/interpret', data)
+}
+
+/** 多份同类报告对比解读（在「多份对比解读」页左侧选中同类≥2 后调用） */
+export function interpretMulti(patientId, reportNos) {
+  return api.post('/report/interpret-multi', { patient_id: patientId, report_nos: reportNos })
 }
 
 /** 直接传入数据解读 */

@@ -89,6 +89,48 @@ def build_report_user_message(report: ReportData) -> str:
     return "\n".join(lines)
 
 
+# ========== 多份同类报告对比解读 ==========
+
+MULTI_REPORT_OUTPUT_FORMAT = """
+## 输出要求
+请严格按以下两个模块输出，使用临床专业术语，简洁准确：
+
+【对比与趋势总结】
+- 按时间顺序对比多份报告中相同或相关指标的变化
+- 指出好转、稳定、恶化的趋势及可能原因
+- 汇总新出现或持续存在的异常
+
+【临床建议】
+- 针对趋势给出复查、随访或进一步检查建议
+- 如有恶化趋势需特别标注
+"""
+
+
+def build_multi_report_user_message(reports: list[ReportData]) -> str:
+    """将多份报告拼接为用户消息，供对比解读"""
+    parts = []
+    for i, report in enumerate(reports, 1):
+        title = report.report_title or "报告"
+        date_str = report.report_date.strftime("%Y-%m-%d %H:%M") if report.report_date else ""
+        parts.append(f"===== 第{i}份 {title} {date_str} =====\n")
+        if report.raw_text:
+            parts.append(report.raw_text.strip())
+        else:
+            parts.append("（无原文）")
+        parts.append("\n")
+    return "\n".join(parts)
+
+
+def get_multi_report_system_prompt() -> str:
+    """多份同类报告对比解读的 system prompt"""
+    return f"""你是一名资深临床医学专家。请根据以下同一患者的多份同类检验/检查报告，做对比与趋势解读。
+{MULTI_REPORT_OUTPUT_FORMAT}
+## 约束
+- 仅基于所给报告内容，不编造数据
+- 不确定时明确表示「建议结合临床进一步判断」
+- 不做确定性诊断，只做提示性分析"""
+
+
 def get_system_prompt(
     department_code: str = "general",
     report: Optional[ReportData] = None,

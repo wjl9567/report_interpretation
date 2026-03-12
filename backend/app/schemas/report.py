@@ -107,6 +107,22 @@ class InterpretResponse(BaseModel):
         return _serialize_datetime_china(v)
 
 
+class InterpretMultiRequest(BaseModel):
+    """多份同类报告对比解读请求"""
+    patient_id: str = Field(..., description="住院号/门诊号或病历号")
+    report_nos: list[str] = Field(..., description="报告编号列表，至少 2 份")
+
+
+class InterpretMultiResponse(BaseModel):
+    """多份同类报告对比解读响应"""
+    report_title: str = Field("", description="报告类型名称（同类）")
+    report_nos: list[str] = Field(default_factory=list)
+    summary: str = Field("", description="对比与趋势总结")
+    suggestion: str = Field("", description="临床建议")
+    model_name: str = Field("")
+    latency_ms: int = Field(0)
+
+
 # ========== 报告列表 ==========
 
 class ReportListItem(BaseModel):
@@ -132,23 +148,3 @@ class ReportListResponse(BaseModel):
     total: int
 
 
-# ========== 同类检验项目趋势（多份报告同一项目结果变化） ==========
-
-class TrendPoint(BaseModel):
-    """趋势数据点：单次报告中该项目的记录"""
-    report_no: str
-    report_date: Optional[datetime]
-    value: str
-    unit: str = ""
-    reference_range: str = ""
-
-    @field_serializer("report_date")
-    def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
-        return _serialize_datetime_china(v)
-
-
-class TrendResponse(BaseModel):
-    """同类检验项目趋势响应"""
-    item_name: str = Field(..., description="项目名称（如 血红蛋白）")
-    unit: str = Field("", description="单位")
-    data: list[TrendPoint] = Field(default_factory=list, description="按报告日期排序的数据点")

@@ -9,9 +9,18 @@ from typing import Optional
 
 from app.adapters.base import BaseLISAdapter
 from app.services.llm_service import LLMService, llm_service
-from app.prompts.templates import get_system_prompt, build_report_user_message
+from app.prompts.templates import (
+    get_system_prompt,
+    build_report_user_message,
+    get_multi_report_system_prompt,
+    build_multi_report_user_message,
+)
 from app.schemas.report import (
-    ReportData, InterpretResponse, AbnormalItemResult, PatientInfo
+    ReportData,
+    InterpretResponse,
+    InterpretMultiResponse,
+    AbnormalItemResult,
+    PatientInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +97,51 @@ class InterpretationService:
             model_name=llm_response.model,
             latency_ms=llm_response.latency_ms,
         )
+
+    async def interpret_multi_reports(
+        self,
+        reports: list[ReportData],
+        report_title: str = "",
+    ) -> InterpretMultiResponse:
+        """对多份同类报告做对比与趋势解读"""
+        if not reports or len(reports) < 2:
+            return InterpretMultiResponse(
+                report_title=report_title,
+                report_nos=[r.report_no for r in reports] if reports else [],
+                summary="",
+                suggestion="至少需要 2 份报告才能进行对比解读。",
+            )
+        system_prompt = get_multi_report_system_prompt()
+        user_message = build_multi_report_user_message(reports)
+        logger.info(f"开始多份报告对比解读，共 {len(reports)} 份")
+        llm_response = await self.llm.chat(
+            system_prompt=system_prompt,
+            user_message=user_message,
+        )
+        summary, suggestion = self._parse_multi_response(llm_response.content)
+        return InterpretMultiResponse(
+            report_title=report_title or (reports[0].report_title if reports else ""),
+            report_nos=[r.report_no for r in reports],
+            summary=summary,
+            suggestion=suggestion,
+            model_name=llm_response.model,
+            latency_ms=llm_response.latency_ms,
+        )
+
+    @staticmethod
+    def _parse_multi_response(content: str) -> tuple[str, str]:
+        """从多份报告解读输出中提取【对比与趋势总结】和【临床建议】"""
+        summary = ""
+        suggestion = ""
+        if not content:
+            return summary, suggestion
+        sum_match = re.search(r"【对比与趋势总结】\s*(.*?)(?=【临床建议】|$)", content, re.DOTALL)
+        if sum_match:
+            summary = sum_match.group(1).strip()
+        sug_match = re.search(r"【临床建议】\s*(.*?)$", content, re.DOTALL)
+        if sug_match:
+            suggestion = sug_match.group(1).strip()
+        return summary, suggestion
 
     @staticmethod
     def _parse_response(content: str) -> tuple[str, str, str]:

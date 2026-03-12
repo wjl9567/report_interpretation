@@ -25,7 +25,7 @@
           <el-option label="内科" value="internal" />
           <el-option label="呼吸科" value="respiratory" />
         </el-select>
-        <span class="disclaimer-text">⚠ 仅供临床参考，不替代医生诊断</span>
+        <span class="disclaimer-text">⚠ AI 解读仅供参考，不替代临床判断，诊疗责任由医师承担。</span>
       </div>
     </div>
 
@@ -63,27 +63,25 @@
               <el-badge v-if="examReportCount > 0" :value="examReportCount" class="tab-badge" />
             </template>
           </el-tab-pane>
-          <el-tab-pane label="项目趋势" name="trend" />
+          <el-tab-pane label="多份对比解读" name="trend" />
         </el-tabs>
 
-        <!-- 项目趋势：输入项目名查多份报告中的结果变化 -->
+        <!-- 多份对比解读页左侧：同类报告≥2 份列表，点击后在右侧展示多份报告解读 -->
         <div class="trend-panel" v-if="reportListSourceTab === 'trend' && patientInfo">
-          <div class="trend-form">
-            <el-input v-model="trendItemName" placeholder="如：血红蛋白、肌酐、谷丙转氨酶" size="small" clearable @keyup.enter="fetchTrend" />
-            <el-button type="primary" size="small" :loading="trendLoading" @click="fetchTrend">查询趋势</el-button>
+          <div class="trend-groups-title">同类报告（≥2 份）<span class="trend-groups-hint">选一组，多份报告一起提交 AI 解读</span></div>
+          <div v-if="trendGroups.length" class="trend-groups-list">
+            <div
+              v-for="g in trendGroups"
+              :key="g.title"
+              class="trend-group-item"
+              :class="{ active: selectedTrendGroup?.title === g.title }"
+              @click="selectTrendGroup(g)"
+            >
+              <span class="trend-group-name">{{ g.title }}</span>
+              <el-tag size="small" type="info">{{ g.count }} 份</el-tag>
+            </div>
           </div>
-          <div v-if="trendData" class="trend-result">
-            <div class="trend-title">{{ trendData.item_name }} <span v-if="trendData.unit">({{ trendData.unit }})</span></div>
-            <el-table v-if="trendData.data.length" :data="trendData.data" stripe size="small" max-height="280">
-              <el-table-column prop="report_date" label="报告日期" width="110">
-                <template #default="{ row }">{{ formatDate(row.report_date) }}</template>
-              </el-table-column>
-              <el-table-column prop="value" label="结果" width="90" />
-              <el-table-column prop="unit" label="单位" width="60" />
-              <el-table-column prop="reference_range" label="参考范围" min-width="100" />
-            </el-table>
-            <div v-else class="trend-empty">未在近 20 份检验报告中找到该项目</div>
-          </div>
+          <div v-else class="trend-groups-empty">暂无同类多份报告，可切换「全部/检验/检查」查看单份报告</div>
         </div>
 
         <!-- 报告列表（按 Tab 筛选） -->
@@ -176,11 +174,15 @@
         </div>
       </div>
 
-      <!-- 右侧：AI解读结果 -->
+      <!-- 右侧：AI解读结果 或 多份对比解读页（多份报告解读） -->
       <div class="right-panel">
         <div class="panel-header">
-          <h3>AI解读结果</h3>
-          <div class="interpret-meta" v-if="interpretResult">
+          <h3>{{ reportListSourceTab === 'trend' ? '多份报告对比解读' : 'AI解读结果' }}</h3>
+          <div class="interpret-meta" v-if="reportListSourceTab === 'trend' && multiInterpretResult">
+            <span class="meta-primary">{{ multiInterpretResult.report_title }} · {{ multiInterpretResult.report_nos?.length || 0 }} 份</span>
+            <span class="meta-secondary">{{ multiInterpretResult.model_name }} · {{ multiInterpretResult.latency_ms }}ms</span>
+          </div>
+          <div class="interpret-meta" v-else-if="interpretResult">
             <span class="meta-primary">报告编号：{{ interpretResult.report_no }}</span>
             <span class="meta-primary">解读时间：{{ interpretedAtLabel }}</span>
             <el-tooltip content="基于异常项覆盖与危急值情况评估，供参考" placement="top">
@@ -190,6 +192,35 @@
           </div>
         </div>
 
+        <!-- 多份对比解读页右侧：多份报告解读 -->
+        <template v-if="reportListSourceTab === 'trend'">
+          <div class="loading-state" v-if="multiInterpretLoading">
+            <el-icon class="loading-icon" :size="32"><Loading /></el-icon>
+            <p>正在生成多份报告对比解读…</p>
+          </div>
+          <div v-else-if="multiInterpretResult" class="interpret-result multi-interpret-result">
+            <div class="result-actions">
+              <el-button type="primary" link size="small" @click="copyMultiInterpret">复制解读结果</el-button>
+            </div>
+            <div class="result-section">
+              <div class="section-title">对比与趋势总结</div>
+              <div class="section-content" v-html="formatContent(multiInterpretResult.summary)"></div>
+            </div>
+            <div class="result-section">
+              <div class="section-title">临床建议</div>
+              <div class="section-content" v-html="formatContent(multiInterpretResult.suggestion)"></div>
+            </div>
+            <div class="result-disclaimer">
+              多份报告对比解读为辅助分析，临床决策请结合患者完整信息。诊疗责任由医师承担。
+            </div>
+          </div>
+          <div v-else class="empty-interpret">
+            <p class="trend-placeholder">请从左侧选择「同类报告（≥2 份）」：多份报告将一起提交 AI 做对比解读。</p>
+          </div>
+        </template>
+
+        <!-- 单份报告解读区（非趋势 Tab） -->
+        <template v-else>
         <!-- 科室/类型切换提示 -->
         <div class="switch-hint" v-if="showSwitchHint">
           已切换科室或报告类型，请点击「开始AI解读」重新解读。
@@ -209,6 +240,9 @@
 
         <!-- 解读结果 -->
         <div class="interpret-result" v-else-if="interpretResult">
+          <div class="result-actions">
+            <el-button type="primary" link size="small" @click="copySingleInterpret">复制解读结果</el-button>
+          </div>
           <div class="result-section">
             <div class="section-title">
               <el-icon color="#ff4d4f"><WarningFilled /></el-icon>
@@ -234,6 +268,9 @@
           </div>
 
           <div class="result-disclaimer">
+            本结果基于异常项与危急值覆盖情况评估，临床决策请结合患者完整信息。
+          </div>
+          <div class="result-disclaimer">
             ⚠ {{ interpretResult.disclaimer }}
           </div>
         </div>
@@ -249,16 +286,17 @@
         <div class="empty-interpret" v-else>
           <p style="color: #999">请先选择一份报告</p>
         </div>
+        </template>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getConfig, getReportList, getReportDetail, interpretReport, getReportTrend } from '@/api'
+import { getConfig, getReportList, getReportDetail, interpretReport, interpretMulti } from '@/api'
 import { formatDate } from '@/utils/datetime'
 
 const route = useRoute()
@@ -279,9 +317,9 @@ const searched = ref(false)
 const mssqlHidResolver = ref(false)
 const lastInterpretParams = ref(null)
 const reportListSourceTab = ref('all') // all | lab | exam | trend
-const trendItemName = ref('')
-const trendLoading = ref(false)
-const trendData = ref(null)
+const selectedTrendGroup = ref(null)
+const multiInterpretLoading = ref(false)
+const multiInterpretResult = ref(null)
 
 const patientIdLabel = computed(() => (mssqlHidResolver.value ? '患者标识' : '住院号'))
 const confidenceLabel = computed(() => {
@@ -324,6 +362,20 @@ const pdfIframeSrc = computed(() => {
   return url
 })
 
+/** 同类报告≥2 的分组（按 report_title），用于多份对比解读页左侧列表 */
+const trendGroups = computed(() => {
+  const list = reportList.value || []
+  const map = new Map()
+  for (const r of list) {
+    const title = r.report_title || '未命名报告'
+    if (!map.has(title)) map.set(title, { title, report_nos: [], count: 0 })
+    const g = map.get(title)
+    g.report_nos.push(r.report_no)
+    g.count += 1
+  }
+  return Array.from(map.values()).filter((g) => g.count >= 2).sort((a, b) => b.count - a.count)
+})
+
 watch([departmentCode, reportType], () => {
   if (interpretResult.value) {
     interpretResult.value = null
@@ -338,17 +390,19 @@ watch([reportListSourceTab, filteredReportList], () => {
   if (!stillInList) selectedReportNo.value = list[0].report_no
 }, { immediate: false })
 
-async function fetchTrend() {
-  if (!trendItemName.value.trim() || !patientInfo.value) return
-  trendLoading.value = true
-  trendData.value = null
+/** 选中同类报告组，请求多份报告对比解读 */
+async function selectTrendGroup(g) {
+  if (!patientInfo.value || !g?.report_nos?.length) return
+  selectedTrendGroup.value = g
+  multiInterpretLoading.value = true
+  multiInterpretResult.value = null
   try {
-    const res = await getReportTrend(patientInfo.value.patient_id, trendItemName.value.trim(), 'lab', 20)
-    trendData.value = res.data
+    const res = await interpretMulti(patientInfo.value.patient_id, g.report_nos)
+    multiInterpretResult.value = res.data
   } catch (err) {
-    ElMessage.error(err.response?.data?.detail || '查询趋势失败')
+    ElMessage.error(err.response?.data?.detail || '多份报告解读失败')
   } finally {
-    trendLoading.value = false
+    multiInterpretLoading.value = false
   }
 }
 
@@ -373,14 +427,22 @@ async function fetchReportList(patientId) {
     patientInfo.value = res.data.patient
     reportList.value = res.data.reports
     if (reportList.value.length > 0) {
-      selectedReportNo.value = reportList.value[0].report_no
+      const q = route.query
+      const wantNo = (q.report_no || q.reportNo || '').trim()
+      const autoInterpret = q.auto_interpret === '1' || q.auto_interpret === 'true' || q.auto_interpret === 'yes'
+      const found = wantNo ? reportList.value.find((r) => String(r.report_no) === String(wantNo)) : null
+      selectedReportNo.value = found ? found.report_no : reportList.value[0].report_no
       interpretResult.value = null
       reportDetail.value = null
-      if (!reportList.value[0].pdf_url) {
+      const first = reportList.value.find((r) => r.report_no === selectedReportNo.value) || reportList.value[0]
+      if (first && !first.pdf_url) {
         try {
-          const detailRes = await getReportDetail(patientInfo.value.patient_id, reportList.value[0].report_no)
+          const detailRes = await getReportDetail(patientInfo.value.patient_id, first.report_no)
           reportDetail.value = detailRes.data
         } catch {}
+      }
+      if (autoInterpret && selectedReportNo.value) {
+        nextTick(() => doInterpret())
       }
     }
   } catch (err) {
@@ -429,6 +491,43 @@ async function doInterpret() {
 
 function goHome() {
   router.push('/')
+}
+
+function copySingleInterpret() {
+  if (!interpretResult.value) return
+  const r = interpretResult.value
+  const lines = [
+    `【异常总结】\n${r.abnormal_summary || ''}`,
+    `【临床意义】\n${r.clinical_significance || ''}`,
+    `【临床建议】\n${r.clinical_suggestion || ''}`,
+    '',
+    `报告编号：${r.report_no}`,
+    r.disclaimer || 'AI 解读仅供参考，不替代临床判断，诊疗责任由医师承担。',
+  ]
+  const text = lines.join('\n\n')
+  copyToClipboard(text)
+}
+
+function copyMultiInterpret() {
+  if (!multiInterpretResult.value) return
+  const m = multiInterpretResult.value
+  const lines = [
+    `【对比与趋势总结】\n${m.summary || ''}`,
+    `【临床建议】\n${m.suggestion || ''}`,
+    '',
+    `报告类型：${m.report_title}，共 ${m.report_nos?.length || 0} 份`,
+    '多份报告对比解读为辅助分析，临床决策请结合患者完整信息。诊疗责任由医师承担。',
+  ]
+  const text = lines.join('\n\n')
+  copyToClipboard(text)
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => ElMessage.success('已复制到剪贴板')).catch(() => ElMessage.warning('复制失败'))
+  } else {
+    ElMessage.warning('当前浏览器不支持一键复制，请手动选择文字复制')
+  }
 }
 
 function formatContent(text) {
@@ -589,11 +688,17 @@ function getRowClassName({ row }) {
 .empty-tab-hint { font-size: 12px; color: #909399; }
 
 .trend-panel { padding: 12px; flex-shrink: 0; border-bottom: 1px solid #f0f0f0; }
-.trend-form { display: flex; gap: 8px; margin-bottom: 12px; }
-.trend-form .el-input { flex: 1; }
-.trend-result { font-size: 13px; }
-.trend-title { font-weight: 600; margin-bottom: 8px; color: #333; }
-.trend-empty { font-size: 12px; color: #909399; padding: 12px 0; }
+.trend-groups-title { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 8px; }
+.trend-groups-hint { font-size: 11px; font-weight: 400; color: #909399; margin-left: 6px; }
+.trend-groups-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; max-height: 240px; overflow-y: auto; }
+.trend-group-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid #eee; }
+.trend-group-item:hover { background: #f5f7fa; }
+.trend-group-item.active { background: #ecf5ff; border-color: #409eff; }
+.trend-group-name { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trend-groups-empty { font-size: 12px; color: #909399; padding: 12px 0; }
+.trend-placeholder { color: #909399; font-size: 13px; line-height: 1.6; }
+.multi-interpret-result .result-section { margin-bottom: 16px; }
+.multi-interpret-result .section-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #333; }
 
 .report-list {
   padding: 8px 12px;
@@ -679,6 +784,9 @@ function getRowClassName({ row }) {
   overflow-y: auto;
 }
 
+.result-actions {
+  margin-bottom: 12px;
+}
 .result-section {
   margin-bottom: 24px;
 }

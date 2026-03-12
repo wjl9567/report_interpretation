@@ -1,9 +1,10 @@
 """报告解读 API 路由"""
 
-import asyncio
 import logging
+import time
+import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -12,10 +13,10 @@ from app.schemas.report import (
     InterpretRequest,
     InterpretDirectRequest,
     InterpretResponse,
+    InterpretMultiRequest,
+    InterpretMultiResponse,
     ReportListResponse,
     ReportData,
-    TrendResponse,
-    TrendPoint,
 )
 from app.services.interpretation import InterpretationService
 from app.services.hid_resolver import resolve_pat_num_to_hid, resolve_pat_num_to_hid_list
@@ -91,6 +92,8 @@ async def get_report_list(patient_id: str):
 @router.post("/interpret", response_model=InterpretResponse, summary="AI解读报告")
 async def interpret_report(req: InterpretRequest):
     """通过住院号/门诊号或病历号/门诊卡号与报告编号触发AI解读。多 HID 时依次尝试直到该 report_no 命中。"""
+    request_id = str(uuid.uuid4())
+    start = time.perf_counter()
     try:
         hid_list = await _resolve_to_hid_list(req.patient_id)
         if not hid_list:
@@ -104,6 +107,10 @@ async def interpret_report(req: InterpretRequest):
                     department_code=req.department_code,
                     report_type=req.report_type,
                 )
+                logger.info(
+                    "interpret_done request_id=%s patient_id=%s report_no=%s latency_ms=%.0f",
+                    request_id, req.patient_id, req.report_no, (time.perf_counter() - start) * 1000,
+                )
                 return result
             except ValueError as e:
                 last_err = e
@@ -112,7 +119,7 @@ async def interpret_report(req: InterpretRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"报告解读失败: {e}")
+        logger.error("interpret_failed request_id=%s error=%s", request_id, e)
         raise HTTPException(status_code=500, detail=f"解读服务异常: {str(e)}")
 
 
@@ -129,6 +136,43 @@ async def interpret_direct(req: InterpretDirectRequest):
     except Exception as e:
         logger.error(f"报告解读失败: {e}")
         raise HTTPException(status_code=500, detail=f"解读服务异常: {str(e)}")
+
+
+@router.post("/interpret-multi", response_model=InterpretMultiResponse, summary="多份同类报告对比解读")
+async def interpret_multi(req: InterpretMultiRequest):
+    """基于多份同类报告（≥2 份）做对比与趋势解读。用于「多份对比解读」页左侧选中同类报告≥2 后右侧展示。"""
+    request_id = str(uuid.uuid4())
+    start = time.perf_counter()
+    report_nos = [n for n in (req.report_nos or []) if (n or "").strip()]
+    if len(report_nos) < 2:
+        raise HTTPException(status_code=400, detail="至少需要 2 份报告编号")
+    try:
+        hid_list = await _resolve_to_hid_list(req.patient_id)
+        if not hid_list:
+            raise HTTPException(status_code=404, detail=f"未解析到患者: {req.patient_id}")
+        reports: list[ReportData] = []
+        for report_no in report_nos:
+            for hid in hid_list:
+                try:
+                    report = await lis_adapter.get_report_detail(hid, report_no)
+                    reports.append(report)
+                    break
+                except (ValueError, Exception):
+                    continue
+        if len(reports) < 2:
+            raise HTTPException(status_code=400, detail="未能获取至少 2 份报告详情，请确认报告编号与患者匹配")
+        report_title = reports[0].report_title if reports else ""
+        result = await interpret_service.interpret_multi_reports(reports, report_title=report_title)
+        logger.info(
+            "interpret_multi_done request_id=%s patient_id=%s reports=%s latency_ms=%.0f",
+            request_id, req.patient_id, len(reports), (time.perf_counter() - start) * 1000,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("interpret_multi_failed request_id=%s error=%s", request_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/patient/search", summary="搜索患者")
@@ -197,80 +241,4 @@ async def get_report_pdf(
         raise
     except Exception as e:
         logger.error(f"获取报告 PDF 失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/trend", response_model=TrendResponse, summary="同类检验项目结果趋势")
-async def get_report_trend(
-    patient_id: str,
-    item_name: str,
-    source: Optional[str] = "lab",
-    limit: int = 20,
-):
-    """按患者与检验项目名称，聚合多份报告中该项目的数值，用于趋势展示。多 HID 时合并列表再取 limit。"""
-    if not (item_name or "").strip():
-        raise HTTPException(status_code=400, detail="item_name 不能为空")
-    limit = min(max(1, limit), 20)
-    try:
-        hid_list = await _resolve_to_hid_list(patient_id)
-        if not hid_list:
-            return TrendResponse(item_name=(item_name or "").strip(), unit="", data=[])
-        seen_no: set[str] = set()
-        reports_with_hid: list[tuple[str, Any]] = []
-        for hid in hid_list:
-            try:
-                batch = await lis_adapter.get_patient_reports(hid)
-                for r in batch:
-                    rno = getattr(r, "report_no", None)
-                    if rno and rno not in seen_no:
-                        seen_no.add(rno)
-                        reports_with_hid.append((hid, r))
-            except Exception as e:
-                logger.debug(f"趋势合并报告时跳过 HID={hid}: {e}")
-        reports = [r for _, r in reports_with_hid]
-        if source == "lab":
-            reports = [r for r in reports if getattr(r, "report_source", None) == "lab"]
-        elif source == "exam":
-            reports = [r for r in reports if getattr(r, "report_source", None) == "exam"]
-        if not reports:
-            return TrendResponse(item_name=item_name.strip(), unit="", data=[])
-        sort_key = lambda r: (r.report_date or datetime.min)
-        reports = sorted(reports, key=sort_key, reverse=True)[:limit]
-        hid_by_rno = {getattr(r, "report_no"): hid for hid, r in reports_with_hid if getattr(r, "report_no", None)}
-        points: list[TrendPoint] = []
-        item_name_clean = (item_name or "").strip()
-
-        async def fetch_one(hid: str, report_no: str, report_date):
-            try:
-                detail = await lis_adapter.get_report_detail(hid, report_no)
-                for item in detail.items or []:
-                    name = (item.name or "").strip()
-                    if not name or not item_name_clean:
-                        continue
-                    if item_name_clean in name or name in item_name_clean:
-                        return TrendPoint(
-                            report_no=detail.report_no,
-                            report_date=report_date or detail.report_date,
-                            value=item.value or "",
-                            unit=item.unit or "",
-                            reference_range=item.reference_range or "",
-                        )
-            except Exception as e:
-                logger.debug(f"趋势拉取单报告失败 report_no={report_no}: {e}")
-            return None
-
-        tasks = [fetch_one(hid_by_rno.get(r.report_no, hid_list[0]), r.report_no, r.report_date) for r in reports]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, TrendPoint):
-                points.append(r)
-            elif isinstance(r, Exception):
-                logger.debug(f"趋势单报告异常: {r}")
-        points.sort(key=lambda p: (p.report_date or datetime.min))
-        unit = points[0].unit if points else ""
-        return TrendResponse(item_name=item_name_clean, unit=unit, data=points)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取趋势失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
