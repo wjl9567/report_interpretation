@@ -1,8 +1,23 @@
 """Pydantic schemas - API 请求/响应数据模型"""
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
+
+from app.core.config import settings
+
+
+def _serialize_datetime_china(dt: Optional[datetime]) -> Optional[str]:
+    """将 datetime 序列化为中国时区 ISO 字符串，保证全站中文时区一致、不乱码。"""
+    if dt is None:
+        return None
+    tz = ZoneInfo(settings.TIMEZONE)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    else:
+        dt = dt.astimezone(tz)
+    return dt.isoformat()
 
 
 # ========== 检验项目 ==========
@@ -37,6 +52,10 @@ class ReportData(BaseModel):
     items: list[ReportItem] = Field(default_factory=list, description="检验项目列表")
     raw_text: str = Field("", description="原始报告文本")
     pdf_url: Optional[str] = Field(None, description="报告 PDF 地址（或后端代理路径，供前端左侧展示）")
+
+    @field_serializer("report_date")
+    def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
+        return _serialize_datetime_china(v)
 
 
 # ========== 解读请求/响应 ==========
@@ -83,6 +102,10 @@ class InterpretResponse(BaseModel):
     latency_ms: int = Field(0)
     disclaimer: str = Field("本解读结果由AI辅助生成，仅供临床参考，不替代医生诊断。")
 
+    @field_serializer("report_date")
+    def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
+        return _serialize_datetime_china(v)
+
 
 # ========== 报告列表 ==========
 
@@ -95,6 +118,10 @@ class ReportListItem(BaseModel):
     has_critical: bool = False
     has_interpretation: bool = False
     pdf_url: Optional[str] = Field(None, description="报告 PDF 地址或代理路径")
+
+    @field_serializer("report_date")
+    def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
+        return _serialize_datetime_china(v)
 
 
 class ReportListResponse(BaseModel):

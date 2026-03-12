@@ -10,7 +10,7 @@ data:
   PORT: "8080"
   HOSPITAL_NAME: "报告AI解读"
   APP_NAME: "报告AI解读系统"
-  # vLLM（安诊儿）与 OCR 改为院内实际地址或集群内 Service
+  # 推理服务（本次实施为 sglang 部署安诊儿，OpenAI 兼容接口）；OCR 改为院内实际地址或集群内 Service
   VLLM_BASE_URL: "http://vllm-service.default.svc.cluster.local:8000"
   OCR_SERVICE_URL: "http://ocr-service.default.svc.cluster.local:8866"
   # LIS：mock=演示数据，winning=卫宁 ASMX；对接卫宁时改为 winning 并填 LIS_API_BASE_URL
@@ -20,3 +20,17 @@ data:
   HL7_ENABLED: "false"
   # 嵌入/患者接口：list_select=先展示报告列表选中再解读，latest_auto=自动解读最新一条
   EMBED_REPORT_MODE: "list_select"
+  # 全站中文时区，API 日期序列化与展示
+  TIMEZONE: "Asia/Shanghai"
+  # 轻量知识增强：规范/指南目录，启用后按报告类型与科室注入 knowledge/ 下 .md 片段
+  KNOWLEDGE_ENABLED: "false"
+  KNOWLEDGE_DIR: "knowledge"
+  KNOWLEDGE_MAX_CHARS: "4000"
+  # SQL Server：病历号/门诊卡号→HID 解析（正式对接时启用）。密码放 Secret
+  MSSQL_ENABLED: "false"
+  MSSQL_SERVER: ""
+  MSSQL_USER: ""
+  MSSQL_DATABASE: ""
+  MSSQL_VIEW_HID: "VW_BRJZXXK"
+  MSSQL_COLUMN_PAT_NUM: "pat_num"
+  MSSQL_COLUMN_XH: "xh"

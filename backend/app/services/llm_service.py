@@ -1,6 +1,6 @@
-"""vLLM 推理服务封装
+"""推理服务封装（sglang 部署安诊儿，OpenAI 兼容接口）
 
-通过 OpenAI 兼容 API 调用 vLLM 部署的安诊儿模型。
+通过 OpenAI 兼容 API 调用 sglang 部署的安诊儿模型。
 设计为可替换的抽象层，未来可切换其他模型或推理服务。
 """
 
@@ -84,14 +84,14 @@ class LLMService:
                 latency_ms=latency_ms,
             )
         except httpx.TimeoutException:
-            logger.error(f"vLLM 推理超时 (>{self.timeout}s)")
+            logger.error(f"推理服务超时 (>{self.timeout}s)")
             raise
         except Exception as e:
-            logger.error(f"vLLM 推理失败: {e}")
+            logger.error(f"推理服务失败: {e}")
             raise
 
     async def health_check(self) -> bool:
-        """检查 vLLM 服务是否可用"""
+        """检查推理服务（sglang）是否可用"""
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(f"{self.base_url}/health")

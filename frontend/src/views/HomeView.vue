@@ -10,11 +10,22 @@
 
     <div class="search-section">
       <div class="search-card">
-        <h2>请输入患者住院号/门诊号</h2>
+        <el-collapse>
+          <el-collapse-item name="usage">
+            <template #title>
+              <span class="usage-title"><el-icon><InfoFilled /></el-icon> 使用说明</span>
+            </template>
+            <div class="usage-content">
+              <p><strong>从本院系统（EMR）打开：</strong>链接中已带患者号时，直接显示该患者报告列表，选择报告即可解读。</p>
+              <p><strong>独立使用：</strong>下方输入住院号/门诊号（或病历号、门诊卡号）查询本院报告；或上传外院报告图片进行解读。</p>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+        <h2>{{ searchTitle }}</h2>
         <div class="search-bar">
           <el-input
             v-model="patientId"
-            placeholder="输入住院号或门诊号，如 100001"
+            :placeholder="searchPlaceholder"
             size="large"
             clearable
             @keyup.enter="handleSearch"
@@ -70,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getConfig } from '@/api'
@@ -79,11 +90,20 @@ const router = useRouter()
 const patientId = ref('')
 const loading = ref(false)
 const hospitalName = ref('')
+const mssqlHidResolver = ref(false)
+
+const searchTitle = computed(() =>
+  mssqlHidResolver.value ? '请输入患者住院号/门诊号或病历号/门诊卡号' : '请输入患者住院号/门诊号'
+)
+const searchPlaceholder = computed(() =>
+  mssqlHidResolver.value ? '输入住院号、门诊号或病历号/门诊卡号，如 100001' : '输入住院号或门诊号，如 100001'
+)
 
 onMounted(async () => {
   try {
     const res = await getConfig()
-    hospitalName.value = res.data.hospital_name
+    hospitalName.value = res.data.hospital_name ?? ''
+    mssqlHidResolver.value = !!res.data.mssql_hid_resolver
   } catch {
     hospitalName.value = ''
   }
@@ -92,7 +112,7 @@ onMounted(async () => {
 function handleSearch() {
   const id = patientId.value.trim()
   if (!id) {
-    ElMessage.warning('请输入住院号或门诊号')
+    ElMessage.warning(mssqlHidResolver.value ? '请输入住院号、门诊号或病历号/门诊卡号' : '请输入住院号或门诊号')
     return
   }
   router.push({ name: 'Interpret', params: { patientId: id } })
@@ -185,6 +205,24 @@ function goUpload() {
 .demo-label {
   font-size: 13px;
   color: #999;
+}
+
+.usage-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.usage-content {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.7;
+}
+.usage-content p {
+  margin: 0 0 8px;
+}
+.usage-content p:last-child {
+  margin-bottom: 0;
 }
 
 .features-section {

@@ -3,6 +3,7 @@
 管理两个维度的模板：
 1. 科室维度（血液科、内科、呼吸科等）—— 影响解读的关注侧重点
 2. 报告类型维度（检验、B超、心电、CT、核磁等）—— 影响解读的专业方向
+3. 轻量知识增强：按科室/报告类型注入规范与指南片段（KNOWLEDGE_ENABLED 时）
 
 模板与代码分离，方便后续调优和按医院定制。
 """
@@ -11,6 +12,7 @@ import logging
 from typing import Optional
 
 from app.schemas.report import ReportData
+from app.prompts.knowledge_loader import get_knowledge_snippets
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +113,10 @@ def get_system_prompt(
     else:
         dept_extra = ""
 
-    return base + dept_extra
+    # 轻量知识增强：注入规范/指南片段
+    knowledge = get_knowledge_snippets(department_code=department_code, report_type=report_type)
+
+    return base + dept_extra + knowledge
 
 
 def _default_base_prompt() -> str:

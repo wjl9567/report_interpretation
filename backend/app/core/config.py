@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # 数据库（默认SQLite，生产环境切换PostgreSQL）
     DATABASE_URL: str = "sqlite+aiosqlite:///./report_ai.db"
 
-    # vLLM 推理服务
+    # 推理服务（本次实施使用 sglang 部署安诊儿模型，OpenAI 兼容 chat 接口；亦支持 vLLM）
     VLLM_BASE_URL: str = "http://localhost:8000"
     VLLM_MODEL_NAME: str = "AntAngelMed"
     VLLM_TIMEOUT: int = 30
@@ -65,6 +65,28 @@ class Settings(BaseSettings):
     # list_select：弹出界面先展示报告列表，选中某条再解读该条
     # latest_auto：弹出后自动解读该患者最新一条报告
     EMBED_REPORT_MODE: str = "list_select"
+
+    # 全站中文与时区：API 日期序列化、日志等使用中国时区
+    TIMEZONE: str = "Asia/Shanghai"
+
+    # 前端展示：帮助与反馈链接（可选，为空则不显示）
+    HELP_URL: str = ""
+    FEEDBACK_URL: str = ""
+
+    # 轻量知识增强：按科室/报告类型加载规范与指南片段并注入 prompt，不依赖向量库
+    KNOWLEDGE_ENABLED: bool = False
+    KNOWLEDGE_DIR: str = "knowledge"
+    KNOWLEDGE_MAX_CHARS: int = 4000
+
+    # SQL Server：根据 pat_num（病历号/门诊卡号）解析为 xh（HID），再调 LIS 获取报告。不配置则 API 的 patient_id 视为 HID。
+    MSSQL_ENABLED: bool = False
+    MSSQL_SERVER: str = ""
+    MSSQL_USER: str = ""
+    MSSQL_PASSWORD: str = ""
+    MSSQL_DATABASE: str = ""
+    MSSQL_VIEW_HID: str = "VW_BRJZXXK"
+    MSSQL_COLUMN_PAT_NUM: str = "pat_num"
+    MSSQL_COLUMN_XH: str = "xh"
 
     model_config = {
         "env_file": ".env",

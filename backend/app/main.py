@@ -1,7 +1,9 @@
-"""FastAPI 主入口"""
+"""FastAPI 主入口 - 全站中文、UTF-8、中国时区"""
 
 import logging
 from contextlib import asynccontextmanager
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +26,7 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     logging.info(f"启动 {settings.APP_NAME} v{settings.APP_VERSION}")
     logging.info(f"医院: {settings.HOSPITAL_NAME}")
-    logging.info(f"vLLM 地址: {settings.VLLM_BASE_URL}")
+    logging.info(f"推理服务(sglang/安诊儿)地址: {settings.VLLM_BASE_URL}")
     logging.info(f"LIS 适配器: {settings.LIS_ADAPTER}")
     await init_db()
 
@@ -62,6 +64,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 确保 JSON 等文本类响应带 charset=utf-8，避免中文乱码
+class CharsetUTF8Middleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        ct = response.headers.get("content-type") or ""
+        if "application/json" in ct and "charset=" not in ct:
+            response.headers["content-type"] = ct.rstrip("; ") + "; charset=utf-8"
+        elif "text/" in ct and "charset=" not in ct:
+            response.headers["content-type"] = ct.rstrip("; ") + "; charset=utf-8"
+        return response
+
+
+app.add_middleware(CharsetUTF8Middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

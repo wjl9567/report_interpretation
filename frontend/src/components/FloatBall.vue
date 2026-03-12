@@ -27,7 +27,7 @@
         <div class="panel-search">
           <el-input
             v-model="patientId"
-            placeholder="输入住院号/门诊号"
+            :placeholder="searchPlaceholder"
             size="small"
             clearable
             @keyup.enter="searchAndInterpret"
@@ -83,7 +83,7 @@
           </div>
 
           <div v-else class="empty-area">
-            <p>输入住院号查询报告<br/>或上传报告图片</p>
+            <p>{{ mssqlHidResolver ? '输入住院号/门诊号或病历号查询报告' : '输入住院号查询报告' }}<br/>或上传报告图片</p>
           </div>
         </div>
 
@@ -97,8 +97,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { interpretReport, uploadAndInterpret } from '@/api'
+import { ref, computed, onMounted } from 'vue'
+import { getConfig, interpretReport, uploadAndInterpret } from '@/api'
 
 const panelVisible = ref(false)
 const patientId = ref('')
@@ -107,6 +107,18 @@ const deptCode = ref('general')
 const loading = ref(false)
 const result = ref('')
 const error = ref('')
+const mssqlHidResolver = ref(false)
+
+const searchPlaceholder = computed(() =>
+  mssqlHidResolver.value ? '输入住院号/门诊号或病历号/门诊卡号' : '输入住院号/门诊号'
+)
+
+onMounted(async () => {
+  try {
+    const res = await getConfig()
+    mssqlHidResolver.value = !!res.data.mssql_hid_resolver
+  } catch {}
+})
 
 const ballTop = ref(200)
 const ballRight = ref(20)

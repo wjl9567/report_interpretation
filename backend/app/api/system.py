@@ -31,6 +31,7 @@ async def health_check():
         "hospital": settings.HOSPITAL_NAME,
         "version": settings.APP_VERSION,
         "lis_adapter": settings.LIS_ADAPTER,
+        "mssql_hid_resolver": settings.MSSQL_ENABLED,
         "vllm_status": "connected" if vllm_ok else "disconnected",
         "ocr_status": "connected" if ocr_ok else "disconnected",
         "hl7": hl7_info,
@@ -44,6 +45,7 @@ async def get_frontend_config():
         "hospital_name": settings.HOSPITAL_NAME,
         "version": settings.APP_VERSION,
         "lis_adapter": settings.LIS_ADAPTER,
+        "mssql_hid_resolver": settings.MSSQL_ENABLED,
         "hl7_enabled": settings.HL7_ENABLED,
         "embed_report_mode": settings.EMBED_REPORT_MODE,
         "departments": [
@@ -52,6 +54,8 @@ async def get_frontend_config():
             {"code": "respiratory", "name": "呼吸科"},
             {"code": "general", "name": "通用"},
         ],
+        "help_url": settings.HELP_URL or None,
+        "feedback_url": settings.FEEDBACK_URL or None,
         "report_types": [
             {"code": "lab", "name": "检验报告"},
             {"code": "ultrasound", "name": "B超"},

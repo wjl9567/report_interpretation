@@ -32,7 +32,7 @@
     <!-- 患者信息条 -->
     <div class="patient-bar" v-if="patientInfo">
       <el-descriptions :column="5" size="small" border>
-        <el-descriptions-item label="住院号">{{ patientInfo.patient_id }}</el-descriptions-item>
+        <el-descriptions-item :label="patientIdLabel">{{ patientInfo.patient_id }}</el-descriptions-item>
         <el-descriptions-item label="姓名">{{ patientInfo.name }}</el-descriptions-item>
         <el-descriptions-item label="性别">{{ patientInfo.gender }}</el-descriptions-item>
         <el-descriptions-item label="年龄">{{ patientInfo.age }}岁</el-descriptions-item>
@@ -75,7 +75,7 @@
           />
         </div>
 
-        <!-- 报告详情表格（无 PDF 时展示结构化项） -->
+        <!-- 报告详情表格：解读后展示异常项（带等级），解读前或无 PDF 时展示报告项目列表 -->
         <div class="report-detail" v-else-if="interpretResult">
           <el-table
             :data="interpretResult.abnormal_items"
@@ -106,10 +106,30 @@
             </el-table-column>
           </el-table>
         </div>
+        <!-- 解读前：无 PDF 时展示报告项目（先看再解读） -->
+        <div class="report-detail" v-else-if="reportDetail?.items?.length">
+          <div class="report-detail-tip">报告项目（点击右侧「开始AI解读」获取解读结果）</div>
+          <el-table :data="reportDetail.items" stripe size="small">
+            <el-table-column prop="name" label="检验项目" min-width="160" />
+            <el-table-column label="结果" min-width="100">
+              <template #default="{ row }">
+                {{ row.value }} {{ row.unit }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="reference_range" label="参考范围" min-width="120" />
+            <el-table-column prop="abnormal_flag" label="标记" width="70" align="center" />
+          </el-table>
+        </div>
 
-        <!-- 空状态 -->
+        <!-- 空状态：可操作 -->
         <div class="empty-state" v-if="!loading && reportList.length === 0 && searched">
-          <el-empty description="未找到该患者的报告" />
+          <el-empty description="未找到该患者的报告">
+            <template #description>
+              <p>未找到该患者的报告</p>
+              <p class="empty-hint">请核对住院号/门诊号或病历号是否与系统一致，或联系信息科确认。</p>
+              <el-button type="primary" @click="goHome">返回重新输入</el-button>
+            </template>
+          </el-empty>
         </div>
       </div>
 
@@ -118,16 +138,30 @@
         <div class="panel-header">
           <h3>AI解读结果</h3>
           <div class="interpret-meta" v-if="interpretResult">
-            <el-tag type="info" size="small">{{ interpretResult.model_name }}</el-tag>
-            <el-tag type="info" size="small">{{ interpretResult.latency_ms }}ms</el-tag>
-            <el-tag :type="confidenceType" size="small">可信度: {{ confidenceLabel }}</el-tag>
+            <span class="meta-primary">报告编号：{{ interpretResult.report_no }}</span>
+            <span class="meta-primary">解读时间：{{ interpretedAtLabel }}</span>
+            <el-tooltip content="基于异常项覆盖与危急值情况评估，供参考" placement="top">
+              <el-tag :type="confidenceType" size="small">可信度: {{ confidenceLabel }}</el-tag>
+            </el-tooltip>
+            <span class="meta-secondary">{{ interpretResult.model_name }} · {{ interpretResult.latency_ms }}ms</span>
           </div>
         </div>
 
-        <!-- 加载状态 -->
+        <!-- 科室/类型切换提示 -->
+        <div class="switch-hint" v-if="showSwitchHint">
+          已切换科室或报告类型，请点击「开始AI解读」重新解读。
+        </div>
+
+        <!-- 加载状态：分步提示 -->
         <div class="loading-state" v-if="interpreting">
           <el-icon class="loading-icon" :size="32"><Loading /></el-icon>
-          <p>AI正在解读报告，请稍候...</p>
+          <p>{{ loadingStepText }}</p>
+        </div>
+
+        <!-- 解读失败：可重试 -->
+        <div class="error-retry" v-else-if="interpretError">
+          <el-alert :title="interpretError" type="error" show-icon :closable="false" />
+          <el-button type="primary" @click="doInterpret" style="margin-top: 12px">重试解读</el-button>
         </div>
 
         <!-- 解读结果 -->
@@ -162,7 +196,7 @@
         </div>
 
         <!-- 未解读状态 -->
-        <div class="empty-interpret" v-else-if="!interpreting && selectedReportNo">
+        <div class="empty-interpret" v-else-if="!interpreting && selectedReportNo && !interpretError">
           <el-button type="primary" size="large" @click="doInterpret">
             <el-icon><MagicStick /></el-icon>
             开始AI解读
@@ -178,10 +212,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getReportList, interpretReport } from '@/api'
+import { getConfig, getReportList, getReportDetail, interpretReport } from '@/api'
+import { formatDate } from '@/utils/datetime'
 
 const route = useRoute()
 const router = useRouter()
@@ -189,21 +224,40 @@ const router = useRouter()
 const patientInfo = ref(null)
 const reportList = ref([])
 const selectedReportNo = ref('')
+const reportDetail = ref(null)
 const interpretResult = ref(null)
+const interpretError = ref('')
 const reportType = ref('lab')
 const departmentCode = ref('general')
 const loading = ref(false)
+const loadingStep = ref('fetch')
 const interpreting = ref(false)
 const searched = ref(false)
+const mssqlHidResolver = ref(false)
+const lastInterpretParams = ref(null)
 
+const patientIdLabel = computed(() => (mssqlHidResolver.value ? '患者标识' : '住院号'))
 const confidenceLabel = computed(() => {
   const map = { high: '高', medium: '中', low: '低' }
   return map[interpretResult.value?.confidence] || ''
 })
-
 const confidenceType = computed(() => {
   const map = { high: 'success', medium: 'warning', low: 'danger' }
   return map[interpretResult.value?.confidence] || 'info'
+})
+const interpretedAtLabel = computed(() => {
+  if (!interpretResult.value?.report_no) return ''
+  return new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+})
+const loadingStepText = computed(() =>
+  loadingStep.value === 'fetch' ? '正在获取报告列表...' : 'AI正在解读报告，请稍候...'
+)
+const showSwitchHint = computed(() => {
+  if (!interpretResult.value || !lastInterpretParams.value) return false
+  return (
+    departmentCode.value !== lastInterpretParams.value.department_code ||
+    reportType.value !== lastInterpretParams.value.report_type
+  )
 })
 
 const selectedReport = computed(() =>
@@ -213,11 +267,21 @@ const selectedReport = computed(() =>
 const pdfIframeSrc = computed(() => {
   const url = selectedReport.value?.pdf_url
   if (!url) return ''
-  if (url.startsWith('http')) return url
   return url
 })
 
+watch([departmentCode, reportType], () => {
+  if (interpretResult.value) {
+    interpretResult.value = null
+    interpretError.value = ''
+  }
+})
+
 onMounted(async () => {
+  try {
+    const cfg = await getConfig()
+    mssqlHidResolver.value = !!cfg.data.mssql_hid_resolver
+  } catch {}
   const pid = route.params.patientId
   if (pid) {
     await fetchReportList(pid)
@@ -226,14 +290,23 @@ onMounted(async () => {
 
 async function fetchReportList(patientId) {
   loading.value = true
+  loadingStep.value = 'fetch'
   searched.value = true
+  interpretError.value = ''
   try {
     const res = await getReportList(patientId)
     patientInfo.value = res.data.patient
     reportList.value = res.data.reports
-
     if (reportList.value.length > 0) {
-      await selectReport(reportList.value[0])
+      selectedReportNo.value = reportList.value[0].report_no
+      interpretResult.value = null
+      reportDetail.value = null
+      if (!reportList.value[0].pdf_url) {
+        try {
+          const detailRes = await getReportDetail(patientInfo.value.patient_id, reportList.value[0].report_no)
+          reportDetail.value = detailRes.data
+        } catch {}
+      }
     }
   } catch (err) {
     ElMessage.error(err.response?.data?.detail || '查询失败')
@@ -245,13 +318,21 @@ async function fetchReportList(patientId) {
 async function selectReport(report) {
   selectedReportNo.value = report.report_no
   interpretResult.value = null
-  await doInterpret()
+  interpretError.value = ''
+  reportDetail.value = null
+  if (!report.pdf_url) {
+    try {
+      const res = await getReportDetail(patientInfo.value.patient_id, report.report_no)
+      reportDetail.value = res.data
+    } catch {}
+  }
 }
 
 async function doInterpret() {
   if (!selectedReportNo.value || !patientInfo.value) return
-
   interpreting.value = true
+  loadingStep.value = 'interpret'
+  interpretError.value = ''
   try {
     const res = await interpretReport({
       patient_id: patientInfo.value.patient_id,
@@ -260,8 +341,12 @@ async function doInterpret() {
       report_type: reportType.value,
     })
     interpretResult.value = res.data
+    lastInterpretParams.value = {
+      department_code: departmentCode.value,
+      report_type: reportType.value,
+    }
   } catch (err) {
-    ElMessage.error(err.response?.data?.detail || 'AI解读失败，请重试')
+    interpretError.value = err.response?.data?.detail || 'AI解读失败，请重试'
   } finally {
     interpreting.value = false
   }
@@ -269,12 +354,6 @@ async function doInterpret() {
 
 function goHome() {
   router.push('/')
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 function formatContent(text) {
@@ -389,7 +468,38 @@ function getRowClassName({ row }) {
 
 .interpret-meta {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.interpret-meta .meta-primary {
+  color: #333;
+}
+.interpret-meta .meta-secondary {
+  color: #999;
+  font-size: 11px;
+}
+.report-detail-tip {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 8px;
+}
+.empty-state .empty-hint {
+  font-size: 12px;
+  color: #888;
+  margin: 8px 0 12px;
+}
+.switch-hint {
+  font-size: 12px;
+  color: #fa8c16;
+  background: #fff7e6;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 0 20px 12px;
+}
+.error-retry {
+  padding: 20px;
 }
 
 .report-list {

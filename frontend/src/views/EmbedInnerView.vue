@@ -4,11 +4,21 @@
       <span class="embed-title">报告AI解读</span>
     </div>
 
+    <!-- 患者信息条（有患者时展示） -->
+    <div class="embed-patient-bar" v-if="patientInfo">
+      <el-descriptions :column="4" size="small" border>
+        <el-descriptions-item :label="patientIdLabel">{{ patientInfo.patient_id }}</el-descriptions-item>
+        <el-descriptions-item label="姓名">{{ patientInfo.name }}</el-descriptions-item>
+        <el-descriptions-item label="性别">{{ patientInfo.gender }}</el-descriptions-item>
+        <el-descriptions-item label="年龄">{{ patientInfo.age }}岁</el-descriptions-item>
+      </el-descriptions>
+    </div>
+
     <!-- 患者号输入（两种模式都需要） -->
     <div class="embed-search">
       <el-input
         v-model="patientId"
-        placeholder="输入住院号/门诊号"
+        :placeholder="searchPlaceholder"
         size="small"
         clearable
         @keyup.enter="onPatientSubmit"
@@ -61,7 +71,8 @@
         </div>
       </div>
       <div v-else-if="searched && reportList.length === 0" class="embed-empty">
-        该患者暂无报告
+        <p>该患者暂无报告</p>
+        <p class="empty-hint">请核对住院号/门诊号或病历号是否与系统一致。</p>
       </div>
       <!-- 选中后的 PDF（若有）与解读结果 -->
       <div class="embed-result" v-if="selectedReportNo">
@@ -72,9 +83,23 @@
           <el-icon class="spin" :size="24"><Loading /></el-icon>
           <span>AI解读中...</span>
         </div>
-        <div v-else-if="result" class="result-content" v-html="formatResult(result)"></div>
+        <template v-else-if="interpretResult">
+          <div class="result-section">
+            <div class="section-title">异常总结</div>
+            <div class="section-content" v-html="formatResult(interpretResult.abnormal_summary)"></div>
+          </div>
+          <div class="result-section">
+            <div class="section-title">临床意义</div>
+            <div class="section-content" v-html="formatResult(interpretResult.clinical_significance)"></div>
+          </div>
+          <div class="result-section">
+            <div class="section-title">临床建议</div>
+            <div class="section-content" v-html="formatResult(interpretResult.clinical_suggestion)"></div>
+          </div>
+        </template>
         <div v-else-if="error" class="embed-error">
           <el-alert :title="error" type="error" show-icon :closable="false" />
+          <el-button type="primary" size="small" style="margin-top:8px" @click="retryInterpret">重试解读</el-button>
         </div>
       </div>
     </template>
@@ -93,12 +118,29 @@
           <el-icon class="spin" :size="24"><Loading /></el-icon>
           <span>AI解读中...</span>
         </div>
-        <div v-else-if="result" class="result-content" v-html="formatResult(result)"></div>
+        <template v-else-if="interpretResult">
+          <template v-if="interpretResult.abnormal_summary != null">
+            <div class="result-section">
+              <div class="section-title">异常总结</div>
+              <div class="section-content" v-html="formatResult(interpretResult.abnormal_summary)"></div>
+            </div>
+            <div class="result-section">
+              <div class="section-title">临床意义</div>
+              <div class="section-content" v-html="formatResult(interpretResult.clinical_significance)"></div>
+            </div>
+            <div class="result-section">
+              <div class="section-title">临床建议</div>
+              <div class="section-content" v-html="formatResult(interpretResult.clinical_suggestion)"></div>
+            </div>
+          </template>
+          <div v-else-if="interpretResult.interpretation" class="result-content" v-html="formatResult(interpretResult.interpretation)"></div>
+        </template>
         <div v-else-if="error" style="padding:8px 0">
           <el-alert :title="error" type="error" show-icon :closable="false" />
+          <el-button type="primary" size="small" style="margin-top:8px" @click="retryLatest">重试解读</el-button>
         </div>
-        <div v-else class="state-box" style="color:#bbb">
-          输入住院号/门诊号查询<br/>或上传报告图片
+        <div v-else class="state-box" style="color:#bbb; white-space: pre-line">
+          {{ searchEmptyText }}
         </div>
       </div>
     </template>
@@ -116,26 +158,37 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getConfig, getReportList, interpretReport, uploadAndInterpret } from '@/api'
+import { formatDate } from '@/utils/datetime'
 
 const route = useRoute()
 const patientId = ref('')
+const patientInfo = ref(null)
 const reportType = ref('lab')
 const deptCode = ref('general')
 const loading = ref(false)
-const result = ref('')
+const interpretResult = ref(null)
 const error = ref('')
 const embedReportMode = ref('list_select')
 const reportList = ref([])
 const selectedReportNo = ref('')
 const selectedPdfUrl = ref('')
 const searched = ref(false)
+const mssqlHidResolver = ref(false)
 
 const isListSelectMode = computed(() => embedReportMode.value === 'list_select')
+const patientIdLabel = computed(() => (mssqlHidResolver.value ? '患者标识' : '住院号'))
+const searchPlaceholder = computed(() =>
+  mssqlHidResolver.value ? '输入住院号/门诊号或病历号/门诊卡号' : '输入住院号/门诊号'
+)
+const searchEmptyText = computed(() =>
+  mssqlHidResolver.value ? '输入住院号/门诊号或病历号查询\n或上传报告图片' : '输入住院号/门诊号查询\n或上传报告图片'
+)
 
 onMounted(async () => {
   try {
     const res = await getConfig()
     embedReportMode.value = res.data.embed_report_mode || 'list_select'
+    mssqlHidResolver.value = !!res.data.mssql_hid_resolver
   } catch {
     embedReportMode.value = 'list_select'
   }
@@ -166,13 +219,14 @@ async function fetchReportList() {
   if (!patientId.value.trim()) return
   loading.value = true
   error.value = ''
-  result.value = ''
+  interpretResult.value = null
   reportList.value = []
   selectedReportNo.value = ''
   selectedPdfUrl.value = ''
   searched.value = true
   try {
     const res = await getReportList(patientId.value.trim())
+    patientInfo.value = res.data.patient ?? null
     reportList.value = res.data.reports || []
   } catch (err) {
     error.value = err.response?.data?.detail || '获取报告列表失败'
@@ -184,7 +238,7 @@ async function fetchReportList() {
 function selectReport(report) {
   selectedReportNo.value = report.report_no
   selectedPdfUrl.value = report.pdf_url || ''
-  result.value = ''
+  interpretResult.value = null
   error.value = ''
   doInterpretReport(report.report_no)
 }
@@ -200,36 +254,30 @@ async function doInterpretReport(reportNo) {
       department_code: deptCode.value,
       report_type: reportType.value,
     })
-    const d = res.data
-    result.value = [
-      d.abnormal_summary ? `【异常发现】\n${d.abnormal_summary}` : '',
-      d.clinical_significance ? `【临床意义】\n${d.clinical_significance}` : '',
-      d.clinical_suggestion ? `【临床建议】\n${d.clinical_suggestion}` : '',
-    ].filter(Boolean).join('\n\n') || '解读完成'
+    interpretResult.value = res.data
   } catch (err) {
     error.value = err.response?.data?.detail || '解读失败'
   } finally {
     loading.value = false
   }
+}
+
+function retryInterpret() {
+  if (selectedReportNo.value) doInterpretReport(selectedReportNo.value)
 }
 
 async function doInterpretLatest() {
   if (!patientId.value.trim()) return
   loading.value = true
   error.value = ''
-  result.value = ''
+  interpretResult.value = null
   try {
     const res = await interpretReport({
       patient_id: patientId.value.trim(),
       department_code: deptCode.value,
       report_type: reportType.value,
     })
-    const d = res.data
-    result.value = [
-      d.abnormal_summary ? `【异常发现】\n${d.abnormal_summary}` : '',
-      d.clinical_significance ? `【临床意义】\n${d.clinical_significance}` : '',
-      d.clinical_suggestion ? `【临床建议】\n${d.clinical_suggestion}` : '',
-    ].filter(Boolean).join('\n\n') || '解读完成'
+    interpretResult.value = res.data
   } catch (err) {
     error.value = err.response?.data?.detail || '解读失败'
   } finally {
@@ -237,28 +285,26 @@ async function doInterpretLatest() {
   }
 }
 
+function retryLatest() {
+  doInterpretLatest()
+}
+
 async function handleUpload(uploadFile) {
   loading.value = true
   error.value = ''
-  result.value = ''
+  interpretResult.value = null
   const formData = new FormData()
   formData.append('file', uploadFile.raw)
   formData.append('department_code', deptCode.value)
   formData.append('report_type', reportType.value)
   try {
     const res = await uploadAndInterpret(formData)
-    result.value = res.data.interpretation
+    interpretResult.value = { interpretation: res.data.interpretation }
   } catch (err) {
     error.value = err.response?.data?.detail || '解读失败'
   } finally {
     loading.value = false
   }
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 function openFull() {
@@ -267,7 +313,8 @@ function openFull() {
 }
 
 function formatResult(text) {
-  return text
+  if (text == null || text === '') return ''
+  return String(text)
     .replace(/\n/g, '<br/>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/【(.*?)】/g, '<h4 style="margin:12px 0 6px;color:#1677ff;font-size:13px">$1</h4>')
@@ -292,6 +339,11 @@ function formatResult(text) {
   font-size: 15px;
   font-weight: 600;
   color: #1677ff;
+}
+.embed-patient-bar {
+  padding: 8px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
 }
 .embed-search {
   padding: 12px 16px;
@@ -343,6 +395,25 @@ function formatResult(text) {
   font-size: 13px;
   color: #999;
   flex-shrink: 0;
+}
+.embed-empty .empty-hint {
+  font-size: 12px;
+  color: #bbb;
+  margin-top: 4px;
+}
+.result-section {
+  margin-bottom: 14px;
+}
+.result-section .section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1677ff;
+  margin-bottom: 6px;
+}
+.result-section .section-content {
+  font-size: 13px;
+  color: #333;
+  line-height: 1.6;
 }
 .embed-pdf-wrap {
   height: 220px;

@@ -3,6 +3,10 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
+  headers: {
+    'Accept-Language': 'zh-CN',
+    'Accept': 'application/json; charset=utf-8',
+  },
 })
 
 /** 搜索患者 */
@@ -13,6 +17,11 @@ export function searchPatient(keyword) {
 /** 获取患者报告列表 */
 export function getReportList(patientId) {
   return api.get(`/report/list/${patientId}`)
+}
+
+/** 获取报告详情（含项目列表，解读前展示） */
+export function getReportDetail(patientId, reportNo) {
+  return api.get('/report/detail', { params: { patient_id: patientId, report_no: reportNo } })
 }
 
 /** AI解读报告 */

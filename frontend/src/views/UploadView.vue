@@ -113,15 +113,26 @@
           </div>
         </div>
 
-        <!-- 加载状态 -->
+        <!-- 加载状态：分步提示 -->
         <div class="loading-state" v-if="interpreting">
           <el-icon class="loading-icon" :size="32"><Loading /></el-icon>
-          <p>正在识别并解读报告，请稍候...</p>
+          <p>正在识别报告...</p>
           <p class="loading-sub">OCR识别 → AI解读，预计需要5-10秒</p>
+        </div>
+
+        <!-- 解读失败：可重试 -->
+        <div class="error-retry" v-else-if="interpretError">
+          <el-alert :title="interpretError" type="error" show-icon :closable="false" />
+          <el-button type="primary" @click="doInterpret" style="margin-top: 12px">重试解读</el-button>
         </div>
 
         <!-- 解读结果 -->
         <div class="result-area" v-else-if="result">
+          <!-- 根据 OCR 建议报告类型（可选重新解读） -->
+          <div class="suggest-type" v-if="result.ocr_text && suggestedReportType && suggestedReportType !== reportType">
+            <span class="suggest-label">根据识别内容，建议报告类型：{{ suggestedReportTypeLabel }}</span>
+            <el-button size="small" @click="applySuggestedType">按建议重新解读</el-button>
+          </div>
           <!-- OCR 识别文本 -->
           <el-collapse v-model="activeCollapse">
             <el-collapse-item title="OCR识别原文（点击展开）" name="ocr">
@@ -148,24 +159,55 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadAndInterpret } from '@/api'
+
+const REPORT_TYPES = [
+  { code: 'lab', name: '检验报告' },
+  { code: 'ultrasound', name: 'B超' },
+  { code: 'ecg', name: '心电图' },
+  { code: 'eeg', name: '脑电图' },
+  { code: 'pulmonary', name: '肺功能' },
+  { code: 'ct', name: 'CT' },
+  { code: 'xray', name: '放射/X光' },
+  { code: 'mri', name: '核磁共振' },
+]
 
 const uploadRef = ref(null)
 const selectedFile = ref(null)
 const previewUrl = ref('')
 const interpreting = ref(false)
 const result = ref(null)
+const interpretError = ref('')
 const reportType = ref('lab')
 const departmentCode = ref('general')
 const activeCollapse = ref([])
 const patientForm = ref({ name: '', gender: '', age: '' })
 
+const suggestedReportType = computed(() => {
+  const text = result.value?.ocr_text || ''
+  if (!text) return null
+  if (/白细胞|红细胞|血红蛋白|血小板|谷丙|谷草|肌酐|尿素|血糖|胆固醇|甘油三酯|转氨酶/i.test(text)) return 'lab'
+  if (/超声|B超|彩超/i.test(text)) return 'ultrasound'
+  if (/心电图|ECG|心律/i.test(text)) return 'ecg'
+  if (/脑电图|EEG/i.test(text)) return 'eeg'
+  if (/肺功能|通气/i.test(text)) return 'pulmonary'
+  if (/CT|计算机断层/i.test(text)) return 'ct'
+  if (/X线|X光|放射|DR/i.test(text)) return 'xray'
+  if (/MRI|核磁|磁共振/i.test(text)) return 'mri'
+  return null
+})
+const suggestedReportTypeLabel = computed(() => {
+  const t = REPORT_TYPES.find((r) => r.code === suggestedReportType.value)
+  return t ? t.name : ''
+})
+
 function handleFileChange(uploadFile) {
   selectedFile.value = uploadFile.raw
   previewUrl.value = URL.createObjectURL(uploadFile.raw)
   result.value = null
+  interpretError.value = ''
 }
 
 function handleExceed() {
@@ -180,6 +222,7 @@ async function doInterpret() {
 
   interpreting.value = true
   result.value = null
+  interpretError.value = ''
 
   const formData = new FormData()
   formData.append('file', selectedFile.value)
@@ -193,9 +236,16 @@ async function doInterpret() {
     const res = await uploadAndInterpret(formData)
     result.value = res.data
   } catch (err) {
-    ElMessage.error(err.response?.data?.detail || '解读失败，请重试')
+    interpretError.value = err.response?.data?.detail || '解读失败，请重试'
   } finally {
     interpreting.value = false
+  }
+}
+
+function applySuggestedType() {
+  if (suggestedReportType.value) {
+    reportType.value = suggestedReportType.value
+    doInterpret()
   }
 }
 
@@ -251,6 +301,22 @@ function formatContent(text) {
   background: #fff2f0;
   padding: 4px 12px;
   border-radius: 4px;
+}
+
+.suggest-type {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #f6ffed;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.suggest-label { flex: 1; }
+.error-retry {
+  padding: 20px;
 }
 
 .main-area {

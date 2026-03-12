@@ -23,14 +23,29 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8080
-      # 默认使用 PostgreSQL；启动时自动建表
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/report_ai}
       - VLLM_BASE_URL=${VLLM_BASE_URL:-http://host.docker.internal:8000}
+      - VLLM_MODEL_NAME=${VLLM_MODEL_NAME:-AntAngelMed}
       - OCR_SERVICE_URL=${OCR_SERVICE_URL:-http://host.docker.internal:8866}
       - HOSPITAL_NAME=${HOSPITAL_NAME:-报告AI解读}
       - LIS_ADAPTER=${LIS_ADAPTER:-mock}
       - LIS_USE_ASMX=${LIS_USE_ASMX:-false}
       - LIS_API_BASE_URL=${LIS_API_BASE_URL:-}
+      - EMBED_REPORT_MODE=${EMBED_REPORT_MODE:-list_select}
+      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
+      - KNOWLEDGE_ENABLED=${KNOWLEDGE_ENABLED:-false}
+      - KNOWLEDGE_DIR=${KNOWLEDGE_DIR:-knowledge}
+      - KNOWLEDGE_MAX_CHARS=${KNOWLEDGE_MAX_CHARS:-4000}
+      - MSSQL_ENABLED=${MSSQL_ENABLED:-false}
+      - MSSQL_SERVER=${MSSQL_SERVER:-}
+      - MSSQL_USER=${MSSQL_USER:-}
+      - MSSQL_PASSWORD=${MSSQL_PASSWORD:-}
+      - MSSQL_DATABASE=${MSSQL_DATABASE:-}
+      - MSSQL_VIEW_HID=${MSSQL_VIEW_HID:-VW_BRJZXXK}
+      - MSSQL_COLUMN_PAT_NUM=${MSSQL_COLUMN_PAT_NUM:-pat_num}
+      - MSSQL_COLUMN_XH=${MSSQL_COLUMN_XH:-xh}
+      - HELP_URL=${HELP_URL:-}
+      - FEEDBACK_URL=${FEEDBACK_URL:-}
     volumes:
       - backend-data:/app/data
       - backend-uploads:/app/uploads
