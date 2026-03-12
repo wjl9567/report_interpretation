@@ -14,7 +14,10 @@ export function searchPatient(keyword) {
   return api.get('/report/patient/search', { params: { keyword } })
 }
 
-/** 获取患者报告列表 */
+/**
+ * 获取患者报告列表
+ * 返回 reports[]：report_no, report_title, report_date, pdf_url, report_source(lab=检验/8092, exam=检查/8091) 等，与后端 ReportListItem 一致
+ */
 export function getReportList(patientId) {
   return api.get(`/report/list/${patientId}`)
 }
@@ -22,6 +25,11 @@ export function getReportList(patientId) {
 /** 获取报告详情（含项目列表，解读前展示） */
 export function getReportDetail(patientId, reportNo) {
   return api.get('/report/detail', { params: { patient_id: patientId, report_no: reportNo } })
+}
+
+/** 同类检验项目趋势（多份报告中同一项目结果变化） */
+export function getReportTrend(patientId, itemName, source = 'lab', limit = 20) {
+  return api.get('/report/trend', { params: { patient_id: patientId, item_name: itemName, source, limit } })
 }
 
 /** AI解读报告 */

@@ -13,10 +13,11 @@ data:
   # 推理服务（本次实施为 sglang 部署安诊儿，OpenAI 兼容接口）；OCR 改为院内实际地址或集群内 Service
   VLLM_BASE_URL: "http://vllm-service.default.svc.cluster.local:8000"
   OCR_SERVICE_URL: "http://ocr-service.default.svc.cluster.local:8866"
-  # LIS：mock=演示数据，winning=卫宁 ASMX；对接卫宁时改为 winning 并填 LIS_API_BASE_URL
+  # LIS：mock=演示数据，winning=卫宁 ASMX。检验 8092 + 检查 8091 均需时填两项
   LIS_ADAPTER: "mock"
   LIS_USE_ASMX: "false"
   LIS_API_BASE_URL: ""
+  LIS_EXAM_ASMX_BASE_URL: ""
   HL7_ENABLED: "false"
   # 嵌入/患者接口：list_select=先展示报告列表选中再解读，latest_auto=自动解读最新一条
   EMBED_REPORT_MODE: "list_select"
@@ -34,3 +35,6 @@ data:
   MSSQL_VIEW_HID: "VW_BRJZXXK"
   MSSQL_COLUMN_PAT_NUM: "pat_num"
   MSSQL_COLUMN_XH: "xh"
+  MSSQL_COLUMN_JLRQ: "jlrq"
+  # 报告范围（天）：0=不按日期；7/14=近一周或两周门急诊/住院
+  MSSQL_VIEW_REPORT_DAYS: "0"

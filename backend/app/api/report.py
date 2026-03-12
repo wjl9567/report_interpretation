@@ -1,6 +1,9 @@
 """报告解读 API 路由"""
 
+import asyncio
 import logging
+from datetime import datetime
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -11,9 +14,11 @@ from app.schemas.report import (
     InterpretResponse,
     ReportListResponse,
     ReportData,
+    TrendResponse,
+    TrendPoint,
 )
 from app.services.interpretation import InterpretationService
-from app.services.hid_resolver import resolve_pat_num_to_hid
+from app.services.hid_resolver import resolve_pat_num_to_hid, resolve_pat_num_to_hid_list
 from app.adapters import get_lis_adapter
 
 logger = logging.getLogger(__name__)
@@ -30,23 +35,51 @@ async def _resolve_to_hid(patient_id: str) -> str:
     return (hid if hid else patient_id).strip()
 
 
+async def _resolve_to_hid_list(patient_id: str) -> list[str]:
+    """解析出 HID 列表：当配置 MSSQL_VIEW_REPORT_DAYS 时为近 N 天内多 HID，否则为单 HID 列表。未启用 MSSQL 时用 patient_id 作为唯一 HID。"""
+    hids = await resolve_pat_num_to_hid_list(patient_id)
+    if hids:
+        return hids
+    hid = await resolve_pat_num_to_hid(patient_id)
+    if hid or patient_id:
+        return [(hid or patient_id).strip()]
+    return []
+
+
 @router.get("/list/{patient_id}", response_model=ReportListResponse, summary="获取患者报告列表")
 async def get_report_list(patient_id: str):
-    """根据住院号/门诊号或病历号/门诊卡号获取患者的检验报告列表；若配置 MSSQL 则先按 pat_num 解析为 xh（HID）再查 LIS。"""
+    """根据住院号/门诊号或病历号/门诊卡号获取报告列表。若配置 MSSQL_VIEW_REPORT_DAYS=7/14，则只取近一周或两周内门急诊/住院对应的多 HID，合并列表并去重。"""
     try:
-        hid = await _resolve_to_hid(patient_id)
-        reports = await lis_adapter.get_patient_reports(hid)
-        patients = await lis_adapter.search_patient(hid)
-        patient = patients[0] if patients else None
-
+        hid_list = await _resolve_to_hid_list(patient_id)
+        if not hid_list:
+            raise HTTPException(status_code=404, detail=f"未解析到患者: {patient_id}")
+        seen_no: set[str] = set()
+        reports_merged: list = []
+        patient = None
+        for hid in hid_list:
+            try:
+                reports_batch = await lis_adapter.get_patient_reports(hid)
+                for r in reports_batch:
+                    rno = getattr(r, "report_no", None)
+                    if rno and rno not in seen_no:
+                        seen_no.add(rno)
+                        reports_merged.append(r)
+                if patient is None and reports_batch:
+                    patients = await lis_adapter.search_patient(hid)
+                    if patients:
+                        patient = patients[0]
+            except Exception as e:
+                logger.debug(f"合并报告列表时跳过 HID={hid}: {e}")
+        if patient is None and hid_list:
+            patients = await lis_adapter.search_patient(hid_list[0])
+            patient = patients[0] if patients else None
         if not patient:
             raise HTTPException(status_code=404, detail=f"未找到患者: {patient_id}")
-        # 返回时 patient_id 保持为前端/EMR 传入的标识（可能为 pat_num），内部已用 hid 查 LIS
-
+        reports_merged.sort(key=lambda r: getattr(r, "report_date", None) or datetime.min, reverse=True)
         return ReportListResponse(
             patient=patient,
-            reports=reports,
-            total=len(reports),
+            reports=reports_merged,
+            total=len(reports_merged),
         )
     except HTTPException:
         raise
@@ -57,18 +90,27 @@ async def get_report_list(patient_id: str):
 
 @router.post("/interpret", response_model=InterpretResponse, summary="AI解读报告")
 async def interpret_report(req: InterpretRequest):
-    """通过住院号/门诊号或病历号/门诊卡号与报告编号触发AI解读；若配置 MSSQL 则先按 pat_num 解析为 HID。"""
+    """通过住院号/门诊号或病历号/门诊卡号与报告编号触发AI解读。多 HID 时依次尝试直到该 report_no 命中。"""
     try:
-        hid = await _resolve_to_hid(req.patient_id)
-        result = await interpret_service.interpret_by_patient(
-            patient_id=hid,
-            report_no=req.report_no,
-            department_code=req.department_code,
-            report_type=req.report_type,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        hid_list = await _resolve_to_hid_list(req.patient_id)
+        if not hid_list:
+            raise HTTPException(status_code=404, detail=f"未解析到患者: {req.patient_id}")
+        last_err = None
+        for hid in hid_list:
+            try:
+                result = await interpret_service.interpret_by_patient(
+                    patient_id=hid,
+                    report_no=req.report_no,
+                    department_code=req.department_code,
+                    report_type=req.report_type,
+                )
+                return result
+            except ValueError as e:
+                last_err = e
+                continue
+        raise HTTPException(status_code=404, detail=str(last_err) if last_err else "未找到报告")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"报告解读失败: {e}")
         raise HTTPException(status_code=500, detail=f"解读服务异常: {str(e)}")
@@ -103,34 +145,132 @@ async def search_patient(keyword: str):
 
 @router.get("/detail", response_model=ReportData, summary="获取报告详情（含项目列表，解读前可展示）")
 async def get_report_detail(patient_id: str, report_no: str):
-    """根据 patient_id（或病历号）与 report_no 返回报告完整数据，供前端在解读前展示报告项目。"""
+    """根据 patient_id（或病历号）与 report_no 返回报告完整数据。多 HID 时依次尝试直到命中。"""
     try:
-        hid = await _resolve_to_hid(patient_id)
-        report = await lis_adapter.get_report_detail(hid, report_no)
-        return report
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        hid_list = await _resolve_to_hid_list(patient_id)
+        if not hid_list:
+            raise HTTPException(status_code=404, detail=f"未解析到患者: {patient_id}")
+        last_err = None
+        for hid in hid_list:
+            try:
+                report = await lis_adapter.get_report_detail(hid, report_no)
+                return report
+            except ValueError as e:
+                last_err = e
+                continue
+        raise HTTPException(status_code=404, detail=str(last_err) if last_err else "未找到报告")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取报告详情失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/pdf", summary="报告 PDF 流（代理）")
-async def get_report_pdf(patient_id: str, report_no: str):
-    """根据 patient_id（或病历号/门诊卡号，若配置 MSSQL 则先解析为 HID）与 report_no 返回 PDF 字节流。"""
+async def get_report_pdf(
+    patient_id: str,
+    report_no: str,
+    source: Optional[str] = None,
+):
+    """根据 patient_id（或病历号/门诊卡号）与 report_no 返回 PDF 字节流。多 HID 时依次尝试直到命中。source=lab 检验(8092)，source=exam 检查(8091)。"""
     get_pdf = getattr(lis_adapter, "get_report_pdf_bytes", None)
     if not get_pdf:
         raise HTTPException(status_code=501, detail="当前 LIS 适配器不支持 PDF 代理")
     try:
-        hid = await _resolve_to_hid(patient_id)
-        content = await get_pdf(hid, report_no)
-        return Response(
-            content=content,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "inline; filename=report.pdf"},
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        hid_list = await _resolve_to_hid_list(patient_id)
+        if not hid_list:
+            raise HTTPException(status_code=404, detail=f"未解析到患者: {patient_id}")
+        last_err = None
+        for hid in hid_list:
+            try:
+                content = await get_pdf(hid, report_no, source)
+                return Response(
+                    content=content,
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": "inline; filename=report.pdf"},
+                )
+            except ValueError as e:
+                last_err = e
+                continue
+        raise HTTPException(status_code=404, detail=str(last_err) if last_err else "未找到报告")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取报告 PDF 失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/trend", response_model=TrendResponse, summary="同类检验项目结果趋势")
+async def get_report_trend(
+    patient_id: str,
+    item_name: str,
+    source: Optional[str] = "lab",
+    limit: int = 20,
+):
+    """按患者与检验项目名称，聚合多份报告中该项目的数值，用于趋势展示。多 HID 时合并列表再取 limit。"""
+    if not (item_name or "").strip():
+        raise HTTPException(status_code=400, detail="item_name 不能为空")
+    limit = min(max(1, limit), 20)
+    try:
+        hid_list = await _resolve_to_hid_list(patient_id)
+        if not hid_list:
+            return TrendResponse(item_name=(item_name or "").strip(), unit="", data=[])
+        seen_no: set[str] = set()
+        reports_with_hid: list[tuple[str, Any]] = []
+        for hid in hid_list:
+            try:
+                batch = await lis_adapter.get_patient_reports(hid)
+                for r in batch:
+                    rno = getattr(r, "report_no", None)
+                    if rno and rno not in seen_no:
+                        seen_no.add(rno)
+                        reports_with_hid.append((hid, r))
+            except Exception as e:
+                logger.debug(f"趋势合并报告时跳过 HID={hid}: {e}")
+        reports = [r for _, r in reports_with_hid]
+        if source == "lab":
+            reports = [r for r in reports if getattr(r, "report_source", None) == "lab"]
+        elif source == "exam":
+            reports = [r for r in reports if getattr(r, "report_source", None) == "exam"]
+        if not reports:
+            return TrendResponse(item_name=item_name.strip(), unit="", data=[])
+        sort_key = lambda r: (r.report_date or datetime.min)
+        reports = sorted(reports, key=sort_key, reverse=True)[:limit]
+        hid_by_rno = {getattr(r, "report_no"): hid for hid, r in reports_with_hid if getattr(r, "report_no", None)}
+        points: list[TrendPoint] = []
+        item_name_clean = (item_name or "").strip()
+
+        async def fetch_one(hid: str, report_no: str, report_date):
+            try:
+                detail = await lis_adapter.get_report_detail(hid, report_no)
+                for item in detail.items or []:
+                    name = (item.name or "").strip()
+                    if not name or not item_name_clean:
+                        continue
+                    if item_name_clean in name or name in item_name_clean:
+                        return TrendPoint(
+                            report_no=detail.report_no,
+                            report_date=report_date or detail.report_date,
+                            value=item.value or "",
+                            unit=item.unit or "",
+                            reference_range=item.reference_range or "",
+                        )
+            except Exception as e:
+                logger.debug(f"趋势拉取单报告失败 report_no={report_no}: {e}")
+            return None
+
+        tasks = [fetch_one(hid_by_rno.get(r.report_no, hid_list[0]), r.report_no, r.report_date) for r in reports]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, TrendPoint):
+                points.append(r)
+            elif isinstance(r, Exception):
+                logger.debug(f"趋势单报告异常: {r}")
+        points.sort(key=lambda p: (p.report_date or datetime.min))
+        unit = points[0].unit if points else ""
+        return TrendResponse(item_name=item_name_clean, unit=unit, data=points)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取趋势失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

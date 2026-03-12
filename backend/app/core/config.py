@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     LIS_RETRY_DELAY: float = 1.0
     # 卫宁 LisWebService.asmx：入参 HID（住院首页序号/门诊挂号序号），返回 JSON 含 data[].FILEURL
     LIS_USE_ASMX: bool = False
+    # 检查报告 ASMX（TechQueue.asmx），与 LIS_API_BASE_URL（检验 8092）同时配置时合并列表、按 source 取 PDF
+    LIS_EXAM_ASMX_BASE_URL: str = ""
     LIS_ASMX_METHOD_NAME: str = "GetReportList"
     LIS_ASMX_NAMESPACE: str = "http://tempuri.org/"
     LIS_ASMX_JSON_PARAM_NAME: str = "jsonParam"
@@ -87,6 +89,10 @@ class Settings(BaseSettings):
     MSSQL_VIEW_HID: str = "VW_BRJZXXK"
     MSSQL_COLUMN_PAT_NUM: str = "pat_num"
     MSSQL_COLUMN_XH: str = "xh"
+    # 视图中“记录日期”列（住院为入院日期 rqrq，门诊为挂号日期 ghrq），用于按时间范围筛 xh
+    MSSQL_COLUMN_JLRQ: str = "jlrq"
+    # 报告范围（天）：0=不按日期过滤只取 TOP1；7/14=只取近 7/14 天内的门急诊/住院记录对应的 xh，合并多 HID 报告列表
+    MSSQL_VIEW_REPORT_DAYS: int = 0
 
     model_config = {
         "env_file": ".env",

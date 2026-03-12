@@ -59,14 +59,31 @@
     <template v-if="isListSelectMode">
       <div class="embed-list" v-if="reportList.length > 0">
         <div class="list-title">报告列表（选中即解读）</div>
+        <el-tabs v-model="reportListSourceTab" class="embed-report-tabs">
+          <el-tab-pane label="全部" name="all" />
+          <el-tab-pane name="lab">
+            <template #label>
+              <span>检验</span>
+              <el-badge v-if="labReportCount > 0" :value="labReportCount" class="embed-tab-badge" />
+            </template>
+          </el-tab-pane>
+          <el-tab-pane name="exam">
+            <template #label>
+              <span>检查</span>
+              <el-badge v-if="examReportCount > 0" :value="examReportCount" class="embed-tab-badge" />
+            </template>
+          </el-tab-pane>
+        </el-tabs>
         <div
-          v-for="r in reportList"
+          v-for="r in filteredReportList"
           :key="r.report_no"
           class="report-row"
           :class="{ active: selectedReportNo === r.report_no }"
           @click="selectReport(r)"
         >
           <span class="report-name">{{ r.report_title }}</span>
+          <span v-if="r.report_source === 'lab'" class="report-source report-source-lab">检验</span>
+          <span v-else-if="r.report_source === 'exam'" class="report-source report-source-exam">检查</span>
           <span class="report-date">{{ formatDate(r.report_date) }}</span>
         </div>
       </div>
@@ -155,7 +172,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getConfig, getReportList, interpretReport, uploadAndInterpret } from '@/api'
 import { formatDate } from '@/utils/datetime'
@@ -170,12 +187,20 @@ const interpretResult = ref(null)
 const error = ref('')
 const embedReportMode = ref('list_select')
 const reportList = ref([])
+const reportListSourceTab = ref('all')
 const selectedReportNo = ref('')
 const selectedPdfUrl = ref('')
 const searched = ref(false)
 const mssqlHidResolver = ref(false)
 
 const isListSelectMode = computed(() => embedReportMode.value === 'list_select')
+const labReportCount = computed(() => reportList.value.filter((r) => r.report_source === 'lab').length)
+const examReportCount = computed(() => reportList.value.filter((r) => r.report_source === 'exam').length)
+const filteredReportList = computed(() => {
+  if (reportListSourceTab.value === 'lab') return reportList.value.filter((r) => r.report_source === 'lab')
+  if (reportListSourceTab.value === 'exam') return reportList.value.filter((r) => r.report_source === 'exam')
+  return reportList.value
+})
 const patientIdLabel = computed(() => (mssqlHidResolver.value ? '患者标识' : '住院号'))
 const searchPlaceholder = computed(() =>
   mssqlHidResolver.value ? '输入住院号/门诊号或病历号/门诊卡号' : '输入住院号/门诊号'
@@ -183,6 +208,13 @@ const searchPlaceholder = computed(() =>
 const searchEmptyText = computed(() =>
   mssqlHidResolver.value ? '输入住院号/门诊号或病历号查询\n或上传报告图片' : '输入住院号/门诊号查询\n或上传报告图片'
 )
+
+watch([reportListSourceTab, filteredReportList], () => {
+  const list = filteredReportList.value
+  if (list.length === 0) return
+  const stillInList = list.some((r) => r.report_no === selectedReportNo.value)
+  if (!stillInList) selectReport(list[0])
+}, { immediate: false })
 
 onMounted(async () => {
   try {
@@ -370,8 +402,15 @@ function formatResult(text) {
 .list-title {
   font-size: 12px;
   color: #666;
+  margin-bottom: 4px;
+}
+.embed-report-tabs {
   margin-bottom: 8px;
 }
+.embed-report-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.embed-report-tabs :deep(.el-tabs__item) { font-size: 12px; padding: 0 12px; }
+.embed-report-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
+.embed-tab-badge { margin-left: 2px; }
 .report-row {
   display: flex;
   justify-content: space-between;
@@ -389,7 +428,8 @@ function formatResult(text) {
   color: #1677ff;
 }
 .report-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.report-date { font-size: 11px; color: #999; margin-left: 8px; }
+.report-source { font-size: 10px; color: #909399; margin-left: 6px; flex-shrink: 0; }
+.report-date { font-size: 11px; color: #999; margin-left: 8px; flex-shrink: 0; }
 .embed-empty {
   padding: 12px 16px;
   font-size: 13px;

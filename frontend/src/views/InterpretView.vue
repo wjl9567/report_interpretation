@@ -48,10 +48,48 @@
           <h3>报告</h3>
         </div>
 
-        <!-- 报告列表 -->
-        <div class="report-list" v-if="reportList.length > 0">
+        <!-- 检验/检查 Tab，便于医生按类型查看 -->
+        <el-tabs v-model="reportListSourceTab" class="report-source-tabs" v-if="reportList.length > 0">
+          <el-tab-pane label="全部" name="all" />
+          <el-tab-pane name="lab">
+            <template #label>
+              <span>检验</span>
+              <el-badge v-if="labReportCount > 0" :value="labReportCount" class="tab-badge" />
+            </template>
+          </el-tab-pane>
+          <el-tab-pane name="exam">
+            <template #label>
+              <span>检查</span>
+              <el-badge v-if="examReportCount > 0" :value="examReportCount" class="tab-badge" />
+            </template>
+          </el-tab-pane>
+          <el-tab-pane label="项目趋势" name="trend" />
+        </el-tabs>
+
+        <!-- 项目趋势：输入项目名查多份报告中的结果变化 -->
+        <div class="trend-panel" v-if="reportListSourceTab === 'trend' && patientInfo">
+          <div class="trend-form">
+            <el-input v-model="trendItemName" placeholder="如：血红蛋白、肌酐、谷丙转氨酶" size="small" clearable @keyup.enter="fetchTrend" />
+            <el-button type="primary" size="small" :loading="trendLoading" @click="fetchTrend">查询趋势</el-button>
+          </div>
+          <div v-if="trendData" class="trend-result">
+            <div class="trend-title">{{ trendData.item_name }} <span v-if="trendData.unit">({{ trendData.unit }})</span></div>
+            <el-table v-if="trendData.data.length" :data="trendData.data" stripe size="small" max-height="280">
+              <el-table-column prop="report_date" label="报告日期" width="110">
+                <template #default="{ row }">{{ formatDate(row.report_date) }}</template>
+              </el-table-column>
+              <el-table-column prop="value" label="结果" width="90" />
+              <el-table-column prop="unit" label="单位" width="60" />
+              <el-table-column prop="reference_range" label="参考范围" min-width="100" />
+            </el-table>
+            <div v-else class="trend-empty">未在近 20 份检验报告中找到该项目</div>
+          </div>
+        </div>
+
+        <!-- 报告列表（按 Tab 筛选） -->
+        <div class="report-list" v-else-if="filteredReportList.length > 0">
           <div
-            v-for="report in reportList"
+            v-for="report in filteredReportList"
             :key="report.report_no"
             class="report-list-item"
             :class="{ active: selectedReportNo === report.report_no }"
@@ -59,11 +97,16 @@
           >
             <div class="report-item-title">
               {{ report.report_title }}
+              <el-tag v-if="report.report_source === 'lab'" type="info" size="small" class="report-source-tag">检验</el-tag>
+              <el-tag v-else-if="report.report_source === 'exam'" type="info" size="small" class="report-source-tag">检查</el-tag>
               <el-tag v-if="report.has_critical" type="danger" size="small">危急值</el-tag>
               <el-tag v-else-if="report.has_abnormal" type="warning" size="small">异常</el-tag>
             </div>
             <div class="report-item-date">{{ formatDate(report.report_date) }}</div>
           </div>
+        </div>
+        <div v-else-if="reportList.length > 0 && filteredReportList.length === 0 && reportListSourceTab !== 'trend'" class="report-list-empty-tab">
+          <span class="empty-tab-hint">当前分类暂无报告</span>
         </div>
 
         <!-- 报告 PDF 展示（LIS 返回 FILEURL 时） -->
@@ -215,7 +258,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getConfig, getReportList, getReportDetail, interpretReport } from '@/api'
+import { getConfig, getReportList, getReportDetail, interpretReport, getReportTrend } from '@/api'
 import { formatDate } from '@/utils/datetime'
 
 const route = useRoute()
@@ -235,6 +278,10 @@ const interpreting = ref(false)
 const searched = ref(false)
 const mssqlHidResolver = ref(false)
 const lastInterpretParams = ref(null)
+const reportListSourceTab = ref('all') // all | lab | exam | trend
+const trendItemName = ref('')
+const trendLoading = ref(false)
+const trendData = ref(null)
 
 const patientIdLabel = computed(() => (mssqlHidResolver.value ? '患者标识' : '住院号'))
 const confidenceLabel = computed(() => {
@@ -260,6 +307,13 @@ const showSwitchHint = computed(() => {
   )
 })
 
+const labReportCount = computed(() => reportList.value.filter((r) => r.report_source === 'lab').length)
+const examReportCount = computed(() => reportList.value.filter((r) => r.report_source === 'exam').length)
+const filteredReportList = computed(() => {
+  if (reportListSourceTab.value === 'lab') return reportList.value.filter((r) => r.report_source === 'lab')
+  if (reportListSourceTab.value === 'exam') return reportList.value.filter((r) => r.report_source === 'exam')
+  return reportList.value
+})
 const selectedReport = computed(() =>
   reportList.value.find((r) => r.report_no === selectedReportNo.value)
 )
@@ -276,6 +330,27 @@ watch([departmentCode, reportType], () => {
     interpretError.value = ''
   }
 })
+watch([reportListSourceTab, filteredReportList], () => {
+  if (reportListSourceTab.value === 'trend') return
+  const list = filteredReportList.value
+  if (list.length === 0) return
+  const stillInList = list.some((r) => r.report_no === selectedReportNo.value)
+  if (!stillInList) selectedReportNo.value = list[0].report_no
+}, { immediate: false })
+
+async function fetchTrend() {
+  if (!trendItemName.value.trim() || !patientInfo.value) return
+  trendLoading.value = true
+  trendData.value = null
+  try {
+    const res = await getReportTrend(patientInfo.value.patient_id, trendItemName.value.trim(), 'lab', 20)
+    trendData.value = res.data
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '查询趋势失败')
+  } finally {
+    trendLoading.value = false
+  }
+}
 
 onMounted(async () => {
   try {
@@ -501,6 +576,24 @@ function getRowClassName({ row }) {
 .error-retry {
   padding: 20px;
 }
+
+.report-source-tabs {
+  padding: 0 12px 4px;
+  flex-shrink: 0;
+}
+.report-source-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
+.report-source-tabs :deep(.el-tabs__item) { font-size: 13px; }
+.report-source-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
+.tab-badge { margin-left: 4px; }
+.report-list-empty-tab { padding: 12px; text-align: center; }
+.empty-tab-hint { font-size: 12px; color: #909399; }
+
+.trend-panel { padding: 12px; flex-shrink: 0; border-bottom: 1px solid #f0f0f0; }
+.trend-form { display: flex; gap: 8px; margin-bottom: 12px; }
+.trend-form .el-input { flex: 1; }
+.trend-result { font-size: 13px; }
+.trend-title { font-weight: 600; margin-bottom: 8px; color: #333; }
+.trend-empty { font-size: 12px; color: #909399; padding: 12px 0; }
 
 .report-list {
   padding: 8px 12px;

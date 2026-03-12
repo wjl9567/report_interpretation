@@ -94,11 +94,15 @@ class WinningLISAdapter(BaseLISAdapter):
             resp.raise_for_status()
             return resp
 
-    # ---- 卫宁 ASMX（LisWebService.asmx）----
+    # ---- 卫宁 ASMX（LisWebService.asmx 检验 + TechQueue.asmx 检查）----
 
-    async def _call_asmx(self, hid: str) -> list[dict]:
-        """调用 ASMX：入参 HID，返回 data 数组（含 FILEURL、DOCUMENTNAME、REPORTNO 等）"""
-        if not self.base_url:
+    def _exam_asmx_url(self) -> Optional[str]:
+        return (settings.LIS_EXAM_ASMX_BASE_URL or "").strip().rstrip("/") or None
+
+    async def _call_asmx(self, hid: str, base_url: Optional[str] = None) -> list[dict]:
+        """调用 ASMX：入参 HID，返回 data 数组（含 FILEURL、DOCUMENTNAME、REPORTNO 等）。base_url 为空则用 LIS_API_BASE_URL（检验 8092）。"""
+        url = (base_url or self.base_url).rstrip("/")
+        if not url:
             raise ValueError("LIS_API_BASE_URL 未配置，无法调用 ASMX")
         ns = settings.LIS_ASMX_NAMESPACE
         method = settings.LIS_ASMX_METHOD_NAME
@@ -113,14 +117,16 @@ class WinningLISAdapter(BaseLISAdapter):
             f"</{method}>"
             "</soap:Body></soap:Envelope>"
         )
-        async with self._get_client() as client:
+        headers = {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": f'"{ns}{method}"',
+        }
+        headers.update(self._build_auth_headers())
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
-                self.base_url,
+                url,
                 content=envelope,
-                headers={
-                    "Content-Type": "text/xml; charset=utf-8",
-                    "SOAPAction": f'"{ns}{method}"',
-                },
+                headers=headers,
             )
             resp.raise_for_status()
         text = resp.text
@@ -135,12 +141,23 @@ class WinningLISAdapter(BaseLISAdapter):
             raise ValueError(data.get("desc", "ASMX 返回非 success"))
         return data.get("data") or []
 
-    def _proxy_pdf_url(self, patient_id: str, report_no: str) -> str:
-        return f"/api/v1/report/pdf?patient_id={patient_id}&report_no={report_no}"
+    def _proxy_pdf_url(self, patient_id: str, report_no: str, source: Optional[str] = None) -> str:
+        u = f"/api/v1/report/pdf?patient_id={patient_id}&report_no={report_no}"
+        if source:
+            u += f"&source={source}"
+        return u
 
-    async def get_report_pdf_bytes(self, patient_id: str, report_no: str) -> bytes:
-        """按 HID + 报告号取 PDF 字节流（供前端 /report/pdf 代理使用）"""
-        items = await self._call_asmx(patient_id)
+    async def get_report_pdf_bytes(
+        self, patient_id: str, report_no: str, source: Optional[str] = None
+    ) -> bytes:
+        """按 HID + 报告号取 PDF 字节流。source=lab 用 8092 检验，source=exam 用 8091 检查；未传则先查检验再查检查。"""
+        exam_url = self._exam_asmx_url()
+        if source == "exam" and exam_url:
+            items = await self._call_asmx(patient_id, exam_url)
+        else:
+            items = await self._call_asmx(patient_id)
+            if not items and source != "lab" and exam_url:
+                items = await self._call_asmx(patient_id, exam_url)
         for item in items:
             rno = item.get("REPORTNO") or item.get("FILEID") or ""
             if str(rno) == str(report_no):
@@ -158,9 +175,10 @@ class WinningLISAdapter(BaseLISAdapter):
     async def get_patient_reports(self, patient_id: str) -> list[ReportListItem]:
         if _is_asmx():
             try:
-                items = await self._call_asmx(patient_id)
-                reports = []
-                for item in items:
+                reports: list[ReportListItem] = []
+                # 检验（8092 LisWebService.asmx）
+                items_lab = await self._call_asmx(patient_id)
+                for item in items_lab:
                     rno = item.get("REPORTNO") or item.get("FILEID") or ""
                     reports.append(ReportListItem(
                         report_no=str(rno),
@@ -169,8 +187,25 @@ class WinningLISAdapter(BaseLISAdapter):
                         has_abnormal=False,
                         has_critical=False,
                         has_interpretation=False,
-                        pdf_url=self._proxy_pdf_url(patient_id, rno),
+                        pdf_url=self._proxy_pdf_url(patient_id, rno, "lab"),
+                        report_source="lab",
                     ))
+                # 检查（8091 TechQueue.asmx），与检验合并列表
+                exam_url = self._exam_asmx_url()
+                if exam_url:
+                    items_exam = await self._call_asmx(patient_id, exam_url)
+                    for item in items_exam:
+                        rno = item.get("REPORTNO") or item.get("FILEID") or ""
+                        reports.append(ReportListItem(
+                            report_no=str(rno),
+                            report_title=item.get("DOCUMENTNAME", ""),
+                            report_date=_parse_asmx_datetime(item.get("FILECREATEDATE")),
+                            has_abnormal=False,
+                            has_critical=False,
+                            has_interpretation=False,
+                            pdf_url=self._proxy_pdf_url(patient_id, rno, "exam"),
+                            report_source="exam",
+                        ))
                 return reports
             except Exception as e:
                 logger.error(f"ASMX 获取报告列表失败: {e}")
@@ -189,11 +224,39 @@ class WinningLISAdapter(BaseLISAdapter):
                     has_critical=item.get("has_critical", False),
                     has_interpretation=False,
                     pdf_url=item.get("pdf_url"),
+                    report_source=item.get("report_source"),
                 ))
             return reports
         except Exception as e:
             logger.error(f"获取患者报告列表失败: {e}")
             raise
+
+    async def _get_report_detail_from_item(
+        self, patient_id: str, report_no: str, item: dict
+    ) -> ReportData:
+        file_url = item.get("FILEURL")
+        patient = PatientInfo(patient_id=patient_id, name="")
+        report_date = _parse_asmx_datetime(item.get("FILECREATEDATE"))
+        raw_text = ""
+        if file_url:
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.get(file_url)
+                r.raise_for_status()
+                pdf_bytes = r.content
+            from app.services.ocr_service import ocr_service
+            parsed = await ocr_service.parse_pdf_report(pdf_bytes)
+            if parsed and parsed.raw_text:
+                raw_text = parsed.raw_text
+        source = item.get("_source")
+        return ReportData(
+            report_no=str(report_no),
+            patient=patient,
+            report_title=item.get("DOCUMENTNAME", ""),
+            report_date=report_date,
+            items=[],
+            raw_text=raw_text,
+            pdf_url=self._proxy_pdf_url(patient_id, report_no, source),
+        )
 
     async def get_report_detail(self, patient_id: str, report_no: str) -> ReportData:
         if _is_asmx():
@@ -201,30 +264,17 @@ class WinningLISAdapter(BaseLISAdapter):
                 items = await self._call_asmx(patient_id)
                 for item in items:
                     rno = item.get("REPORTNO") or item.get("FILEID") or ""
-                    if str(rno) != str(report_no):
-                        continue
-                    file_url = item.get("FILEURL")
-                    patient = PatientInfo(patient_id=patient_id, name="")
-                    report_date = _parse_asmx_datetime(item.get("FILECREATEDATE"))
-                    raw_text = ""
-                    if file_url:
-                        async with httpx.AsyncClient(timeout=30) as c:
-                            r = await c.get(file_url)
-                            r.raise_for_status()
-                            pdf_bytes = r.content
-                        from app.services.ocr_service import ocr_service
-                        parsed = await ocr_service.parse_pdf_report(pdf_bytes)
-                        if parsed and parsed.raw_text:
-                            raw_text = parsed.raw_text
-                    return ReportData(
-                        report_no=str(report_no),
-                        patient=patient,
-                        report_title=item.get("DOCUMENTNAME", ""),
-                        report_date=report_date,
-                        items=[],
-                        raw_text=raw_text,
-                        pdf_url=self._proxy_pdf_url(patient_id, report_no),
-                    )
+                    if str(rno) == str(report_no):
+                        item["_source"] = "lab"
+                        return await self._get_report_detail_from_item(patient_id, report_no, item)
+                exam_url = self._exam_asmx_url()
+                if exam_url:
+                    items_exam = await self._call_asmx(patient_id, exam_url)
+                    for item in items_exam:
+                        rno = item.get("REPORTNO") or item.get("FILEID") or ""
+                        if str(rno) == str(report_no):
+                            item["_source"] = "exam"
+                            return await self._get_report_detail_from_item(patient_id, report_no, item)
                 raise ValueError(f"未找到报告: {report_no}")
             except ValueError:
                 raise

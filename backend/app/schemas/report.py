@@ -118,6 +118,7 @@ class ReportListItem(BaseModel):
     has_critical: bool = False
     has_interpretation: bool = False
     pdf_url: Optional[str] = Field(None, description="报告 PDF 地址或代理路径")
+    report_source: Optional[str] = Field(None, description="lab=检验(8092) exam=检查(8091)，PDF 代理按此选择接口")
 
     @field_serializer("report_date")
     def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
@@ -129,3 +130,25 @@ class ReportListResponse(BaseModel):
     patient: PatientInfo
     reports: list[ReportListItem]
     total: int
+
+
+# ========== 同类检验项目趋势（多份报告同一项目结果变化） ==========
+
+class TrendPoint(BaseModel):
+    """趋势数据点：单次报告中该项目的记录"""
+    report_no: str
+    report_date: Optional[datetime]
+    value: str
+    unit: str = ""
+    reference_range: str = ""
+
+    @field_serializer("report_date")
+    def serialize_report_date(self, v: Optional[datetime]) -> Optional[str]:
+        return _serialize_datetime_china(v)
+
+
+class TrendResponse(BaseModel):
+    """同类检验项目趋势响应"""
+    item_name: str = Field(..., description="项目名称（如 血红蛋白）")
+    unit: str = Field("", description="单位")
+    data: list[TrendPoint] = Field(default_factory=list, description="按报告日期排序的数据点")
